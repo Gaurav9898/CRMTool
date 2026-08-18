@@ -240,6 +240,14 @@ function authorizeStrongHerCRM() {
   const enquirySpreadsheet = SpreadsheetApp.openById(CONFIG.enquirySpreadsheetId);
   const invoiceFolder = DriveApp.getFolderById(CONFIG.invoiceFolderId);
   const expenseFolder = DriveApp.getFolderById(CONFIG.expenseFolderId);
+  const invoiceAuthFile = invoiceFolder.createFile(
+    Utilities.newBlob('StrongHer CRM authorization check', 'text/plain', 'strongher-crm-invoice-auth-check.txt')
+  );
+  const expenseAuthFile = expenseFolder.createFile(
+    Utilities.newBlob('StrongHer CRM authorization check', 'text/plain', 'strongher-crm-expense-auth-check.txt')
+  );
+  invoiceAuthFile.setTrashed(true);
+  expenseAuthFile.setTrashed(true);
   UrlFetchApp.fetch(CONFIG.logoUrl, { muteHttpExceptions: true });
 
   return [
