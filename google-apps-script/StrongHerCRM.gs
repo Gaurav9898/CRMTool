@@ -195,7 +195,7 @@ function doPost(event) {
       return json_({ ok: true, record: upsert_(body.entity, body.record) });
     }
 
-    if (body.action === 'delete') {
+    if (body.action === 'delete' || body.action === 'remove') {
       return json_({ ok: true, deleted: delete_(body.entity, body.id) });
     }
 

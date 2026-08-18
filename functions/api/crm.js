@@ -1,5 +1,5 @@
 const allowedEntities = new Set(['leads', 'tasks', 'financeInvoices', 'financeExpenses', 'websiteEnquiries']);
-const allowedActions = new Set(['list', 'create', 'upsert', 'delete']);
+const allowedActions = new Set(['list', 'create', 'upsert', 'delete', 'remove']);
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -62,7 +62,18 @@ export async function onRequestPost({ request, env }) {
       body: JSON.stringify(outbound)
     });
     const text = await response.text();
-    const result = JSON.parse(text);
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch {
+      const looksLikeHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
+      return json({
+        ok: false,
+        error: looksLikeHtml
+          ? 'Apps Script returned an HTML page. Set the Web App access to Anyone and use the /exec Web app URL in GOOGLE_SHEETS_WEB_APP_URL.'
+          : 'Apps Script returned an invalid response.'
+      }, 502);
+    }
 
     if (!response.ok || result.ok === false) {
       return json({ ok: false, error: result.error || 'Google Sheets request failed' }, 502);

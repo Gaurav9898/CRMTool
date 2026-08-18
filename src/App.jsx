@@ -492,7 +492,7 @@ function App() {
     }
 
     setSyncStatus({ state: 'saving', message: 'Deleting from Google Sheets' });
-    const result = await crmRequest('delete', entity, { id });
+    const result = await crmRequest('remove', entity, { id });
     setSyncStatus({ state: 'connected', message: 'Deleted from Google Sheets' });
     return result.deleted;
   };
