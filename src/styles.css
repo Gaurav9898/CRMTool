@@ -865,8 +865,8 @@ button {
 }
 
 .table-row {
-  grid-template-columns: 110px minmax(160px, 1fr) minmax(160px, 1fr) 120px 120px 110px;
-  min-width: 840px;
+  grid-template-columns: 110px minmax(150px, 1fr) minmax(150px, 1fr) 120px 120px 110px 86px;
+  min-width: 930px;
 }
 
 .expense-row {
@@ -936,6 +936,22 @@ button {
 
 .inline-select-field {
   padding: 0 9px;
+}
+
+.inline-link {
+  color: #be123c;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.inline-link:hover {
+  text-decoration: underline;
+}
+
+.muted-cell {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .client-progress {

@@ -2,6 +2,12 @@ const CONFIG = {
   spreadsheetId: '1jyrihEYdXq4Mz_Exerbl1GlA8wmdH3jQFr1fbuBWKo4',
   enquirySpreadsheetId: '19Wm3dqs5d6f4AFiEGk7A_g_DGsQ2FrYQ_LWvafFnMbU',
   enquirySheetNames: ['Form Response 1', 'Form Responses 1', 'Form_Responses'],
+  invoiceFolderId: '17rULGT6_AlXiy8u2zTvctmcBUODiskoY',
+  logoUrl: 'https://strongher-crm-tool.pages.dev/strongher-logo.png',
+  businessName: 'StrongHer By Seema',
+  businessEmail: 'strongherseema@gmail.com',
+  businessPhone: '+91 98296 39773',
+  businessOwner: 'Seema Suthar',
   sharedSecret: ''
 };
 
@@ -100,37 +106,82 @@ const ENTITY_CONFIG = {
   financeInvoices: {
     sheetName: 'FinanceInvoices',
     idColumn: 'invoiceId',
-    headers: ['invoiceId', 'leadId', 'clientName', 'program', 'amount', 'paid', 'taxRate', 'status', 'dueDate', 'createdAt', 'updatedAt', 'paymentMode', 'notes'],
+    headers: ['invoiceId', 'leadId', 'clientName', 'clientPhone', 'clientEmail', 'billingAddress', 'program', 'description', 'amount', 'discountLabel', 'discountAmount', 'subtotal', 'taxRate', 'taxAmount', 'total', 'paid', 'status', 'invoiceDate', 'paymentDate', 'dueDate', 'validFrom', 'validUntil', 'createdAt', 'updatedAt', 'paymentMode', 'notes', 'pdfFileId', 'pdfUrl'],
     toSheet(record) {
+      const amount = Number(record.amount || 0);
+      const discountAmount = Math.min(Number(record.discountAmount || 0), amount);
+      const subtotal = Math.max(amount - discountAmount, 0);
+      const taxRate = Number(record.taxRate || 0);
+      const taxAmount = Math.round((subtotal * taxRate) / 100);
+      const total = subtotal + taxAmount;
+      const paid = Math.min(Number(record.paid || 0), total);
       return {
         invoiceId: record.id,
         leadId: record.leadId || '-',
         clientName: record.client || '',
+        clientPhone: record.clientPhone || '',
+        clientEmail: record.clientEmail || '',
+        billingAddress: record.billingAddress || '',
         program: record.program || '',
-        amount: record.amount || 0,
-        paid: record.paid || 0,
-        taxRate: record.taxRate || 18,
+        description: record.description || record.program || '',
+        amount,
+        discountLabel: record.discountLabel || '',
+        discountAmount,
+        subtotal,
+        taxRate,
+        taxAmount,
+        total,
+        paid,
         status: record.status || 'Pending',
+        invoiceDate: record.invoiceDate || normalizeDateValue_(record.createdAt) || normalizeDateValue_(now_()),
+        paymentDate: record.paymentDate || '',
         dueDate: record.due || '',
+        validFrom: record.validFrom || '',
+        validUntil: record.validUntil || '',
         createdAt: record.createdAt || now_(),
         updatedAt: record.updatedAt || now_(),
         paymentMode: record.paymentMode || '',
-        notes: record.notes || ''
+        notes: record.notes || '',
+        pdfFileId: record.pdfFileId || '',
+        pdfUrl: record.pdfUrl || ''
       };
     },
     fromSheet(row) {
+      const amount = Number(row.amount || 0);
+      const discountAmount = Number(row.discountAmount || 0);
+      const subtotal = Number(row.subtotal || Math.max(amount - discountAmount, 0));
+      const taxRate = Number(row.taxRate || 0);
+      const taxAmount = Number(row.taxAmount || Math.round((subtotal * taxRate) / 100));
+      const total = Number(row.total || subtotal + taxAmount);
       return {
         id: row.invoiceId,
         leadId: row.leadId || '-',
         client: row.clientName,
+        clientPhone: row.clientPhone,
+        clientEmail: row.clientEmail,
+        billingAddress: row.billingAddress,
         program: row.program,
-        amount: Number(row.amount || 0),
+        description: row.description,
+        amount,
+        discountLabel: row.discountLabel,
+        discountAmount,
+        subtotal,
+        taxRate,
+        taxAmount,
+        total,
         paid: Number(row.paid || 0),
-        taxRate: Number(row.taxRate || 18),
         status: row.status || 'Pending',
+        invoiceDate: row.invoiceDate,
+        paymentDate: row.paymentDate,
         due: row.dueDate,
+        validFrom: row.validFrom,
+        validUntil: row.validUntil,
         createdAt: row.createdAt,
-        updatedAt: row.updatedAt
+        updatedAt: row.updatedAt,
+        paymentMode: row.paymentMode,
+        notes: row.notes,
+        pdfFileId: row.pdfFileId,
+        pdfUrl: row.pdfUrl
       };
     }
   },
@@ -217,12 +268,7 @@ function setupSheets_() {
     if (!sheet) {
       sheet = spreadsheet.insertSheet(config.sheetName);
     }
-    const width = Math.max(sheet.getLastColumn(), config.headers.length);
-    const existingHeaders = sheet.getRange(1, 1, 1, width).getValues()[0].filter(Boolean);
-    if (existingHeaders.length === 0) {
-      sheet.getRange(1, 1, 1, config.headers.length).setValues([config.headers]);
-      sheet.setFrozenRows(1);
-    }
+    ensureSheetHeaders_(sheet, config.headers);
   });
 
   let historySheet = spreadsheet.getSheetByName('LeadStatusHistory');
@@ -230,12 +276,23 @@ function setupSheets_() {
     historySheet = spreadsheet.insertSheet('LeadStatusHistory');
   }
   const historyHeaders = ['historyId', 'leadId', 'previousStage', 'newStage', 'changedBy', 'changedAt', 'note', 'nextFollowUp'];
-  const historyWidth = Math.max(historySheet.getLastColumn(), historyHeaders.length);
-  const existingHistoryHeaders = historySheet.getRange(1, 1, 1, historyWidth).getValues()[0].filter(Boolean);
-  if (existingHistoryHeaders.length === 0) {
-    historySheet.getRange(1, 1, 1, historyHeaders.length).setValues([historyHeaders]);
-    historySheet.setFrozenRows(1);
+  ensureSheetHeaders_(historySheet, historyHeaders);
+}
+
+function ensureSheetHeaders_(sheet, headers) {
+  const width = Math.max(sheet.getLastColumn(), headers.length);
+  const existingHeaders = sheet.getRange(1, 1, 1, width).getValues()[0].filter(Boolean);
+  if (existingHeaders.length === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+    return;
   }
+
+  const missingHeaders = headers.filter((header) => existingHeaders.indexOf(header) === -1);
+  if (missingHeaders.length > 0) {
+    sheet.getRange(1, existingHeaders.length + 1, 1, missingHeaders.length).setValues([missingHeaders]);
+  }
+  sheet.setFrozenRows(1);
 }
 
 function bootstrap_() {
@@ -256,7 +313,7 @@ function list_(entity) {
 
   const config = getConfig_(entity);
   const sheet = SpreadsheetApp.openById(CONFIG.spreadsheetId).getSheetByName(config.sheetName);
-  const rows = readRows_(sheet, config.headers);
+  const rows = readRows_(sheet);
   return rows.map((row) => config.fromSheet(row)).filter((record) => record.id);
 }
 
@@ -331,9 +388,13 @@ function getFirstMatchingSheet_(spreadsheet, sheetNames) {
 function append_(entity, record) {
   const config = getConfig_(entity);
   const sheet = SpreadsheetApp.openById(CONFIG.spreadsheetId).getSheetByName(config.sheetName);
-  const nextRecord = { ...record, createdAt: record.createdAt || now_(), updatedAt: now_() };
+  let nextRecord = { ...record, createdAt: record.createdAt || now_(), updatedAt: now_() };
+  if (entity === 'financeInvoices') {
+    nextRecord = attachInvoicePdf_(nextRecord);
+  }
   const row = config.toSheet(nextRecord);
-  sheet.appendRow(config.headers.map((header) => row[header] ?? ''));
+  const sheetHeaders = getSheetHeaders_(sheet);
+  sheet.appendRow(sheetHeaders.map((header) => row[header] ?? ''));
   if (entity === 'leads') {
     appendLeadHistory_('', nextRecord.stage || 'OPEN_LEAD', nextRecord);
   }
@@ -344,21 +405,217 @@ function upsert_(entity, record) {
   const config = getConfig_(entity);
   const spreadsheet = SpreadsheetApp.openById(CONFIG.spreadsheetId);
   const sheet = spreadsheet.getSheetByName(config.sheetName);
-  const rowNumber = findRowNumber_(sheet, config.headers, config.idColumn, record.id);
+  const sheetHeaders = getSheetHeaders_(sheet);
+  const rowNumber = findRowNumber_(sheet, sheetHeaders, config.idColumn, record.id);
   if (!rowNumber) {
     return append_(entity, record);
   }
 
-  const previousRow = rowObject_(sheet.getRange(rowNumber, 1, 1, config.headers.length).getValues()[0], config.headers);
-  const nextRecord = { ...record, updatedAt: now_() };
+  const previousRow = rowObject_(sheet.getRange(rowNumber, 1, 1, sheetHeaders.length).getValues()[0], sheetHeaders);
+  let nextRecord = { ...record, updatedAt: now_() };
+  if (entity === 'financeInvoices') {
+    nextRecord = attachInvoicePdf_(nextRecord);
+  }
   const row = config.toSheet(nextRecord);
-  sheet.getRange(rowNumber, 1, 1, config.headers.length).setValues([config.headers.map((header) => row[header] ?? '')]);
+  sheet.getRange(rowNumber, 1, 1, sheetHeaders.length).setValues([sheetHeaders.map((header) => row[header] ?? '')]);
 
   if (entity === 'leads' && previousRow.stage !== row.stage) {
     appendLeadHistory_(previousRow.stage || '', row.stage || '', nextRecord);
   }
 
   return config.fromSheet(row);
+}
+
+function attachInvoicePdf_(record) {
+  const row = ENTITY_CONFIG.financeInvoices.toSheet(record);
+  const normalized = ENTITY_CONFIG.financeInvoices.fromSheet(row);
+  const pdf = createInvoicePdf_(normalized);
+  return {
+    ...record,
+    subtotal: normalized.subtotal,
+    taxAmount: normalized.taxAmount,
+    total: normalized.total,
+    pdfFileId: pdf.fileId,
+    pdfUrl: pdf.url
+  };
+}
+
+function createInvoicePdf_(invoice) {
+  const folder = DriveApp.getFolderById(CONFIG.invoiceFolderId);
+  const fileName = sanitizeFileName_(`${invoice.id || 'Invoice'} - ${invoice.client || 'Client'}.pdf`);
+  const html = invoiceHtml_(invoice);
+  const pdfBlob = Utilities
+    .newBlob(html, 'text/html', `${fileName}.html`)
+    .getAs(MimeType.PDF)
+    .setName(fileName);
+  const file = folder.createFile(pdfBlob);
+  return { fileId: file.getId(), url: file.getUrl() };
+}
+
+function invoiceHtml_(invoice) {
+  const invoiceDate = formatInvoiceDate_(invoice.invoiceDate || invoice.createdAt);
+  const dueDate = formatInvoiceDate_(invoice.due);
+  const paymentDate = formatInvoiceDate_(invoice.paymentDate);
+  const validFrom = formatInvoiceDate_(invoice.validFrom);
+  const validUntil = formatInvoiceDate_(invoice.validUntil);
+  const discountLabel = invoice.discountLabel || '-';
+  const taxLabel = Number(invoice.taxRate || 0) > 0 ? `${invoice.taxRate}%` : 'NA';
+  const logoUrl = logoDataUri_();
+  const paid = Number(invoice.paid || 0);
+  const balance = Math.max(Number(invoice.total || 0) - paid, 0);
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <style>
+      body { margin: 0; padding: 44px 48px; color: #14110f; background: #f7f6f3; font-family: Arial, Helvetica, sans-serif; font-size: 12px; }
+      .page { max-width: 720px; margin: 0 auto; }
+      .rule { height: 1px; background: #292524; margin: 0 0 14px; opacity: 0.7; }
+      .header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid #292524; }
+      .invoice-title { letter-spacing: 7px; font-size: 24px; }
+      .brand { display: flex; align-items: center; gap: 12px; text-align: right; }
+      .brand img { width: 46px; height: 46px; object-fit: contain; border-radius: 8px; background: #fff; }
+      .brand strong { display: block; letter-spacing: 7px; font-size: 10px; font-weight: 500; text-transform: uppercase; }
+      .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 42px; margin-top: 28px; }
+      .meta p { margin: 0 0 8px; letter-spacing: 2px; text-transform: uppercase; }
+      .meta strong { font-weight: 600; }
+      .client-lines { line-height: 1.7; margin-top: 8px; }
+      .items { width: 100%; border-collapse: collapse; margin-top: 34px; border-top: 1px solid #292524; border-bottom: 1px solid #292524; }
+      .items th { padding: 13px 10px; border-bottom: 1px solid #292524; letter-spacing: 1px; font-size: 11px; text-transform: uppercase; font-weight: 500; }
+      .items td { padding: 20px 10px 30px; text-align: center; vertical-align: top; line-height: 1.35; }
+      .description { width: 36%; }
+      .validity { display: block; margin-top: 18px; font-size: 11px; }
+      .totals { display: grid; grid-template-columns: 1fr 210px; gap: 28px; margin-top: 34px; min-height: 188px; }
+      .thanks { align-self: end; width: 94px; height: 94px; margin-left: 26px; border: 8px solid #f1ebe8; border-radius: 999px; display: grid; place-items: center; text-align: center; font-size: 18px; line-height: 1; }
+      .summary { display: grid; gap: 14px; align-content: start; }
+      .summary div { display: flex; justify-content: space-between; gap: 18px; }
+      .summary strong { font-size: 14px; }
+      .footer { display: grid; grid-template-columns: 1fr 210px; gap: 28px; margin-top: 24px; }
+      .signature { align-self: end; line-height: 1.9; }
+      .signature strong { display: inline-block; margin-bottom: 16px; text-decoration: underline; font-weight: 500; }
+      .note { color: #57534e; font-size: 11px; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <div class="rule"></div>
+      <section class="header">
+        <div class="invoice-title">INVOICE</div>
+        <div class="brand">
+          <div>
+            <strong>${escapeHtml_(CONFIG.businessName)}</strong>
+          </div>
+          <img src="${escapeHtml_(logoUrl)}" alt="StrongHer logo">
+        </div>
+      </section>
+
+      <section class="meta">
+        <div>
+          <p>NO. <strong>${escapeHtml_(invoice.id)}</strong></p>
+          <p>INVOICE TO:</p>
+          <div class="client-lines">
+            ${escapeHtml_(invoice.client)}<br>
+            ${escapeHtml_(invoice.clientPhone || '')}<br>
+            ${escapeHtml_(invoice.clientEmail || '')}<br>
+            ${lineBreaks_(invoice.billingAddress || '')}
+          </div>
+        </div>
+        <div>
+          <p>INVOICE DATE : <strong>${invoiceDate}</strong></p>
+          <p>PAYMENT STATUS : <strong>${escapeHtml_(invoice.status || 'Pending')}</strong></p>
+          ${paymentDate ? `<p>PAYMENT DATE : <strong>${paymentDate}</strong></p>` : ''}
+          ${dueDate ? `<p>DUE DATE : <strong>${dueDate}</strong></p>` : ''}
+          ${invoice.paymentMode ? `<p>PAYMENT MODE : <strong>${escapeHtml_(invoice.paymentMode)}</strong></p>` : ''}
+        </div>
+      </section>
+
+      <table class="items">
+        <thead>
+          <tr>
+            <th class="description">Description</th>
+            <th>Price</th>
+            <th>Discount</th>
+            <th>Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="description">
+              ${escapeHtml_(invoice.description || invoice.program || 'StrongHer coaching package')}
+              ${validFrom || validUntil ? `<span class="validity">Validity:<br>${validFrom || '-'} - ${validUntil || '-'}</span>` : ''}
+            </td>
+            <td>${formatCurrency_(invoice.amount)}</td>
+            <td>${escapeHtml_(discountLabel)}<br>${Number(invoice.discountAmount || 0) ? formatCurrency_(invoice.discountAmount) : ''}</td>
+            <td>${formatCurrency_(invoice.subtotal)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <section class="totals">
+        <div class="thanks">Thank<br>you</div>
+        <div class="summary">
+          <div><span>Sub-total :</span><strong>${formatCurrency_(invoice.subtotal)}</strong></div>
+          <div><span>taxes :</span><strong>${taxLabel}${Number(invoice.taxAmount || 0) ? ` / ${formatCurrency_(invoice.taxAmount)}` : ''}</strong></div>
+          <div><span>Total :</span><strong>${formatCurrency_(invoice.total)}</strong></div>
+          <div><span>Paid :</span><strong>${formatCurrency_(invoice.paid)}</strong></div>
+          <div><span>Balance :</span><strong>${formatCurrency_(balance)}</strong></div>
+        </div>
+      </section>
+
+      <section class="footer">
+        <div class="note">${lineBreaks_(invoice.notes || '')}</div>
+        <div class="signature">
+          <strong>${escapeHtml_(CONFIG.businessOwner)}</strong><br>
+          ${escapeHtml_(CONFIG.businessEmail)}<br>
+          ${escapeHtml_(CONFIG.businessPhone)}
+        </div>
+      </section>
+    </main>
+  </body>
+</html>`;
+}
+
+function logoDataUri_() {
+  try {
+    const response = UrlFetchApp.fetch(CONFIG.logoUrl, { muteHttpExceptions: true });
+    if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
+      return CONFIG.logoUrl;
+    }
+    const blob = response.getBlob();
+    return `data:${blob.getContentType()};base64,${Utilities.base64Encode(blob.getBytes())}`;
+  } catch (error) {
+    return CONFIG.logoUrl;
+  }
+}
+
+function formatInvoiceDate_(value) {
+  const normalized = normalizeDateValue_(value);
+  if (!normalized) return '';
+  const date = new Date(`${normalized}T00:00:00`);
+  return Utilities.formatDate(date, Session.getScriptTimeZone(), 'MMMM d, yyyy');
+}
+
+function formatCurrency_(value) {
+  const amount = Number(value || 0);
+  return `${amount.toLocaleString('en-IN')}/-`;
+}
+
+function lineBreaks_(value) {
+  return escapeHtml_(value).replace(/\n/g, '<br>');
+}
+
+function escapeHtml_(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sanitizeFileName_(value) {
+  return String(value || 'Invoice.pdf').replace(/[\\/:*?"<>|]/g, '-');
 }
 
 function appendLeadHistory_(previousStage, newStage, record) {
@@ -386,21 +643,24 @@ function deleteLead_(id) {
   const spreadsheet = SpreadsheetApp.openById(CONFIG.spreadsheetId);
   const leadConfig = ENTITY_CONFIG.leads;
   const leadSheet = spreadsheet.getSheetByName(leadConfig.sheetName);
-  const leadRowNumber = findRowNumber_(leadSheet, leadConfig.headers, leadConfig.idColumn, id);
+  const leadHeaders = getSheetHeaders_(leadSheet);
+  const leadRowNumber = findRowNumber_(leadSheet, leadHeaders, leadConfig.idColumn, id);
   let enquiryRowId = extractEnquiryRowId_(id);
   let leadDeleted = false;
 
   if (leadRowNumber) {
-    const leadRow = rowObject_(leadSheet.getRange(leadRowNumber, 1, 1, leadConfig.headers.length).getValues()[0], leadConfig.headers);
+    const leadRow = rowObject_(leadSheet.getRange(leadRowNumber, 1, 1, leadHeaders.length).getValues()[0], leadHeaders);
     enquiryRowId = enquiryRowId || leadRow.enquiryRowId;
     leadSheet.deleteRow(leadRowNumber);
     leadDeleted = true;
   }
 
-  const taskDeletes = deleteRowsByValue_(spreadsheet.getSheetByName(ENTITY_CONFIG.tasks.sheetName), ENTITY_CONFIG.tasks.headers, 'leadId', id);
-  const invoiceDeletes = deleteRowsByValue_(spreadsheet.getSheetByName(ENTITY_CONFIG.financeInvoices.sheetName), ENTITY_CONFIG.financeInvoices.headers, 'leadId', id);
+  const taskSheet = spreadsheet.getSheetByName(ENTITY_CONFIG.tasks.sheetName);
+  const invoiceSheet = spreadsheet.getSheetByName(ENTITY_CONFIG.financeInvoices.sheetName);
+  const taskDeletes = deleteRowsByValue_(taskSheet, getSheetHeaders_(taskSheet), 'leadId', id);
+  const invoiceDeletes = deleteRowsByValue_(invoiceSheet, getSheetHeaders_(invoiceSheet), 'leadId', id);
   const historySheet = spreadsheet.getSheetByName('LeadStatusHistory');
-  const historyDeletes = historySheet ? deleteRowsByValue_(historySheet, ['historyId', 'leadId', 'previousStage', 'newStage', 'changedBy', 'changedAt', 'note', 'nextFollowUp'], 'leadId', id) : 0;
+  const historyDeletes = historySheet ? deleteRowsByValue_(historySheet, getSheetHeaders_(historySheet), 'leadId', id) : 0;
   const enquiryDeleted = enquiryRowId ? deleteWebsiteEnquiry_(enquiryRowId) : false;
 
   if (!leadDeleted && !enquiryDeleted) {
@@ -420,7 +680,7 @@ function deleteLead_(id) {
 function deleteRecord_(entity, id) {
   const config = getConfig_(entity);
   const sheet = SpreadsheetApp.openById(CONFIG.spreadsheetId).getSheetByName(config.sheetName);
-  const rowNumber = findRowNumber_(sheet, config.headers, config.idColumn, id);
+  const rowNumber = findRowNumber_(sheet, getSheetHeaders_(sheet), config.idColumn, id);
   if (!rowNumber) throw new Error(`Record not found: ${id}`);
   sheet.deleteRow(rowNumber);
   return { id };
@@ -461,11 +721,17 @@ function getConfig_(entity) {
   return config;
 }
 
-function readRows_(sheet, headers) {
+function readRows_(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
+  const headers = getSheetHeaders_(sheet);
   const values = sheet.getRange(2, 1, lastRow - 1, headers.length).getValues();
   return values.map((row) => rowObject_(row, headers));
+}
+
+function getSheetHeaders_(sheet) {
+  if (!sheet || sheet.getLastColumn() < 1) return [];
+  return sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].filter(Boolean);
 }
 
 function rowObject_(row, headers) {

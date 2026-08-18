@@ -320,6 +320,12 @@ function displayDate(value) {
   return normalizeDateOnly(value, '');
 }
 
+function addDays(dateText, days) {
+  const date = new Date(`${normalizeDateOnly(dateText, today)}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function isSameDate(value, expectedDate) {
   return normalizeDateOnly(value, '') === expectedDate;
 }
@@ -557,7 +563,7 @@ function App() {
   const metrics = useMemo(() => {
     const totalValue = leads.reduce((sum, lead) => sum + lead.value, 0);
     const revenue = payments.reduce((sum, item) => sum + item.paid, 0);
-    const outstanding = payments.reduce((sum, item) => sum + Math.max(item.amount - item.paid, 0), 0);
+    const outstanding = payments.reduce((sum, item) => sum + Math.max((item.total || item.amount) - item.paid, 0), 0);
     const totalExpenses = expenses.reduce((sum, item) => sum + item.amount, 0);
     const taxReserve = [...payments, ...expenses].reduce((sum, item) => {
       const taxableBase = item.paid ?? item.amount;
@@ -679,14 +685,23 @@ function App() {
   const updatePayment = async (id, field, value) => {
     const currentPayment = payments.find((payment) => payment.id === id);
     if (!currentPayment) return;
+    const nextValue = ['amount', 'paid', 'taxRate', 'discountAmount'].includes(field) ? clampMoney(value) : value;
     const nextPayment = {
       ...currentPayment,
-      [field]: ['amount', 'paid', 'taxRate'].includes(field) ? clampMoney(value) : value,
+      [field]: nextValue,
       updatedAt: isoNow()
     };
-    if (field === 'amount' && nextPayment.paid > nextPayment.amount) {
-      nextPayment.paid = nextPayment.amount;
-    }
+    const amount = clampMoney(nextPayment.amount);
+    const discountAmount = Math.min(clampMoney(nextPayment.discountAmount || 0), amount);
+    const subtotal = Math.max(amount - discountAmount, 0);
+    const taxRate = clampMoney(nextPayment.taxRate || 0);
+    const taxAmount = Math.round((subtotal * taxRate) / 100);
+    const total = subtotal + taxAmount;
+    nextPayment.discountAmount = discountAmount;
+    nextPayment.subtotal = subtotal;
+    nextPayment.taxAmount = taxAmount;
+    nextPayment.total = total;
+    nextPayment.paid = Math.min(clampMoney(nextPayment.paid), total);
 
     try {
       const saved = await persistRecord(crmEntities.payments, nextPayment);
@@ -780,17 +795,38 @@ function App() {
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     const amount = clampMoney(form.get('amount'));
-    const paid = Math.min(clampMoney(form.get('paid')), amount);
+    const discountAmount = Math.min(clampMoney(form.get('discountAmount')), amount);
+    const taxRate = clampMoney(form.get('taxRate') || 0);
+    const subtotal = Math.max(amount - discountAmount, 0);
+    const taxAmount = Math.round((subtotal * taxRate) / 100);
+    const total = subtotal + taxAmount;
+    const paid = Math.min(clampMoney(form.get('paid')), total);
+    const paymentStatus = form.get('status') || (paid >= total ? 'Paid' : paid > 0 ? 'Part Paid' : 'Pending');
     const newPayment = {
       id: nextId('INV', payments),
       leadId: form.get('leadId') || '-',
       client: form.get('client'),
+      clientPhone: form.get('clientPhone'),
+      clientEmail: form.get('clientEmail'),
+      billingAddress: form.get('billingAddress'),
       program: form.get('program'),
+      description: form.get('description'),
       amount,
+      discountLabel: form.get('discountLabel'),
+      discountAmount,
+      subtotal,
+      taxAmount,
+      total,
       paid,
+      invoiceDate: form.get('invoiceDate'),
+      paymentDate: form.get('paymentDate'),
       due: form.get('due'),
-      taxRate: clampMoney(form.get('taxRate') || 18),
-      status: paid >= amount ? 'Paid' : paid > 0 ? 'Part Paid' : 'Pending',
+      validFrom: form.get('validFrom'),
+      validUntil: form.get('validUntil'),
+      taxRate,
+      status: paymentStatus,
+      paymentMode: form.get('paymentMode'),
+      notes: form.get('notes'),
       createdAt: isoNow(),
       updatedAt: isoNow()
     };
@@ -1293,6 +1329,7 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment,
           <span>Amount</span>
           <span>Paid</span>
           <span>Status</span>
+          <span>PDF</span>
         </div>
         {payments.length === 0 && <EmptyTableRow message="No invoices loaded from FinanceInvoices." />}
         {payments.map((item) => (
@@ -1308,6 +1345,11 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment,
               onChange={(value) => updatePayment(item.id, 'status', value)}
               ariaLabel={`Invoice status for ${item.client}`}
             />
+            {item.pdfUrl ? (
+              <a className="inline-link" href={item.pdfUrl} target="_blank" rel="noreferrer">Open</a>
+            ) : (
+              <span className="muted-cell">Not created</span>
+            )}
           </div>
         ))}
       </section>
@@ -1810,22 +1852,46 @@ function TaskModal({ onClose, onSubmit, leads }) {
 
 function PaymentModal({ onClose, onSubmit, leads }) {
   const leadOptions = [{ value: '-', label: 'No linked lead' }, ...leads.map((lead) => ({ value: lead.id, label: leadOptionLabel(lead) }))];
+  const [leadId, setLeadId] = useState('-');
+  const selectedLead = leads.find((lead) => lead.id === leadId);
+  const defaultAmount = selectedLead?.value || 0;
+  const defaultDescription = selectedLead ? `${selectedLead.program} for ${selectedLead.goal}` : 'Online coaching package';
+  const validFrom = today;
 
   return (
     <ModalShell title="Add Invoice" onClose={onClose}>
       <form className="modal-form" onSubmit={onSubmit}>
-        <Input name="client" label="Client Name" required />
-        <Select name="leadId" label="Lead" options={leadOptions} />
-        <Select name="program" label="Program" options={programs} />
-        <Input name="amount" label="Amount (Rs)" type="number" min="0" step="1" required />
-        <Input name="paid" label="Paid (Rs)" type="number" min="0" step="1" required />
-        <Input name="taxRate" label="Tax Rate %" type="number" min="0" step="0.1" />
-        <Input name="due" label="Due Date" type="date" required />
+        <Select name="leadId" label="Lead" options={leadOptions} value={leadId} onChange={(event) => setLeadId(event.target.value)} />
+        <Input key={`client-${leadId}`} name="client" label="Invoice To" defaultValue={selectedLead?.name || ''} required />
+        <Input key={`phone-${leadId}`} name="clientPhone" label="Client Phone" defaultValue={selectedLead?.phone || ''} required />
+        <Input key={`email-${leadId}`} name="clientEmail" label="Client Email" type="email" defaultValue={selectedLead?.email || ''} />
+        <label key={`address-${leadId}`} className="field full-field">
+          <span>Billing Address</span>
+          <textarea name="billingAddress" rows="2" defaultValue={selectedLead?.city || ''} />
+        </label>
+        <Select key={`program-${leadId}`} name="program" label="Program" options={programs} defaultValue={selectedLead?.program || programs[0]} />
+        <Input key={`description-${leadId}`} name="description" label="Description" defaultValue={defaultDescription} required />
+        <Input key={`amount-${leadId}`} name="amount" label="Price (Rs)" type="number" min="0" step="1" defaultValue={defaultAmount} required />
+        <Input name="discountLabel" label="Discount / Offer" defaultValue="Referral Offer" />
+        <Input name="discountAmount" label="Discount Amount (Rs)" type="number" min="0" step="1" defaultValue="0" />
+        <Input name="taxRate" label="Tax Rate %" type="number" min="0" step="0.1" defaultValue="0" />
+        <Input name="paid" label="Paid (Rs)" type="number" min="0" step="1" defaultValue="0" required />
+        <Select name="status" label="Payment Status" options={['Pending', 'Part Paid', 'Paid', 'Draft', 'Cancelled']} />
+        <Input name="paymentMode" label="Payment Mode" defaultValue="UPI / Bank Transfer" />
+        <Input name="invoiceDate" label="Invoice Date" type="date" defaultValue={today} required />
+        <Input name="paymentDate" label="Payment Date" type="date" />
+        <Input name="due" label="Due Date" type="date" defaultValue={addDays(today, 7)} required />
+        <Input name="validFrom" label="Validity From" type="date" defaultValue={validFrom} required />
+        <Input name="validUntil" label="Validity Until" type="date" defaultValue={addDays(validFrom, 30)} required />
+        <label className="field full-field">
+          <span>Notes</span>
+          <textarea name="notes" rows="2" defaultValue="Thank you for choosing StrongHer." />
+        </label>
         <div className="modal-actions">
           <button className="ghost-button" type="button" onClick={onClose}>Cancel</button>
           <button className="primary-button" type="submit">
             <Plus size={16} />
-            Save Invoice
+            Save Invoice PDF
           </button>
         </div>
       </form>
@@ -1864,11 +1930,11 @@ function Input({ name, label, type = 'text', required = false, ...props }) {
   );
 }
 
-function Select({ name, label, options }) {
+function Select({ name, label, options, ...props }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <select name={name}>
+      <select name={name} {...props}>
         {options.map((option) => {
           const normalized = typeof option === 'string' ? { value: option, label: option } : option;
           return <option key={normalized.value} value={normalized.value}>{normalized.label}</option>;
