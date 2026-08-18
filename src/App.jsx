@@ -263,9 +263,13 @@ function clampMoney(value) {
 }
 
 function readAttachmentFile(file) {
-  const selectedFile = file?.originFileObj || file;
+  const selectedFile = file?.originFileObj || file?.file || file;
   if (!selectedFile || typeof selectedFile === 'string' || !selectedFile.name || selectedFile.size === 0) {
     return Promise.resolve(null);
+  }
+
+  if (!(selectedFile instanceof Blob)) {
+    return Promise.reject(new Error('Selected receipt could not be read. Please remove it and upload the file again.'));
   }
 
   const maxSize = 8 * 1024 * 1024;
@@ -875,6 +879,9 @@ function App() {
       setPayments((current) => [saved, ...current]);
       setShowPaymentForm(false);
       formElement.reset();
+      if (saved.pdfError) {
+        setSyncStatus({ state: 'error', message: `Invoice saved, but PDF was not created: ${shortFileError(saved.pdfError, 'PDF error')}` });
+      }
     } catch (error) {
       handleSyncError(error);
     }
@@ -893,7 +900,7 @@ function App() {
         category: form.get('category'),
         description: form.get('description'),
         amount: clampMoney(form.get('amount')),
-        date: form.get('date'),
+        date: form.get('date') || today,
         taxRate: clampMoney(form.get('taxRate') || 18),
         status: form.get('status'),
         paymentMode: form.get('paymentMode'),
@@ -906,6 +913,9 @@ function App() {
       setExpenses((current) => [saved, ...current]);
       setShowExpenseForm(false);
       formElement.reset();
+      if (saved.attachmentError) {
+        setSyncStatus({ state: 'error', message: `Expense saved, but receipt was not uploaded: ${shortFileError(saved.attachmentError, 'Upload error')}` });
+      }
     } catch (error) {
       handleSyncError(error);
     } finally {
@@ -1957,7 +1967,7 @@ function PaymentModal({ onClose, onSubmit, leads }) {
 
 function ExpenseModal({ onClose, onSubmit, isSaving }) {
   const [receiptFiles, setReceiptFiles] = useState([]);
-  const selectedReceiptFile = receiptFiles[0]?.originFileObj || receiptFiles[0] || null;
+  const [selectedReceiptFile, setSelectedReceiptFile] = useState(null);
 
   return (
     <ModalShell title="Add Expense" onClose={onClose}>
@@ -1966,14 +1976,21 @@ function ExpenseModal({ onClose, onSubmit, isSaving }) {
         <Input name="description" label="Description" required />
         <Input name="amount" label="Amount (Rs)" type="number" min="0" step="1" required />
         <Input name="taxRate" label="Tax Rate %" type="number" min="0" step="0.1" />
-        <Input name="date" label="Date" type="date" required />
+        <Input name="date" label="Date" type="date" defaultValue={today} />
         <Select name="status" label="Status" options={['Paid', 'Pending', 'Planned']} />
         <Input name="paymentMode" label="Payment Mode" defaultValue="UPI / Bank Transfer" />
         <UploadField
           label="Upload Invoice / Receipt"
           fileList={receiptFiles}
           disabled={isSaving}
-          onChange={(nextFiles) => setReceiptFiles(nextFiles)}
+          onSelect={(file) => {
+            setSelectedReceiptFile(file);
+            setReceiptFiles([file]);
+          }}
+          onRemove={() => {
+            setSelectedReceiptFile(null);
+            setReceiptFiles([]);
+          }}
         />
         <label className="field full-field">
           <span>Notes</span>
@@ -1991,17 +2008,23 @@ function ExpenseModal({ onClose, onSubmit, isSaving }) {
   );
 }
 
-function UploadField({ label, fileList, onChange, disabled }) {
+function UploadField({ label, fileList, onSelect, onRemove, disabled }) {
   return (
     <div className="field upload-field">
       <span>{label}</span>
       <Upload
         accept="application/pdf,image/*"
-        beforeUpload={() => false}
+        beforeUpload={(file) => {
+          onSelect(file);
+          return false;
+        }}
+        disabled={disabled}
         fileList={fileList}
         maxCount={1}
-        onChange={({ fileList: nextFileList }) => onChange(nextFileList.slice(-1))}
-        onRemove={() => onChange([])}
+        onRemove={() => {
+          onRemove();
+          return true;
+        }}
       >
         <AntButton icon={<UploadOutlined />} disabled={disabled}>
           Upload file
