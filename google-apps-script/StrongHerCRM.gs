@@ -195,6 +195,10 @@ function doPost(event) {
       return json_({ ok: true, record: upsert_(body.entity, body.record) });
     }
 
+    if (body.action === 'delete') {
+      return json_({ ok: true, deleted: delete_(body.entity, body.id) });
+    }
+
     throw new Error('Unsupported action');
   } catch (error) {
     return json_({ ok: false, error: error.message });
@@ -354,6 +358,86 @@ function appendLeadHistory_(previousStage, newStage, record) {
     record.lastActivity || 'Lead status updated from CRM',
     record.nextFollowUp || ''
   ]);
+}
+
+function delete_(entity, id) {
+  if (!id) throw new Error('Missing record id');
+  if (entity === 'leads') return deleteLead_(id);
+  if (entity === 'tasks') return deleteRecord_(entity, id);
+  throw new Error(`Delete is not supported for ${entity}`);
+}
+
+function deleteLead_(id) {
+  const spreadsheet = SpreadsheetApp.openById(CONFIG.spreadsheetId);
+  const leadConfig = ENTITY_CONFIG.leads;
+  const leadSheet = spreadsheet.getSheetByName(leadConfig.sheetName);
+  const leadRowNumber = findRowNumber_(leadSheet, leadConfig.headers, leadConfig.idColumn, id);
+  let enquiryRowId = extractEnquiryRowId_(id);
+  let leadDeleted = false;
+
+  if (leadRowNumber) {
+    const leadRow = rowObject_(leadSheet.getRange(leadRowNumber, 1, 1, leadConfig.headers.length).getValues()[0], leadConfig.headers);
+    enquiryRowId = enquiryRowId || leadRow.enquiryRowId;
+    leadSheet.deleteRow(leadRowNumber);
+    leadDeleted = true;
+  }
+
+  const taskDeletes = deleteRowsByValue_(spreadsheet.getSheetByName(ENTITY_CONFIG.tasks.sheetName), ENTITY_CONFIG.tasks.headers, 'leadId', id);
+  const invoiceDeletes = deleteRowsByValue_(spreadsheet.getSheetByName(ENTITY_CONFIG.financeInvoices.sheetName), ENTITY_CONFIG.financeInvoices.headers, 'leadId', id);
+  const historySheet = spreadsheet.getSheetByName('LeadStatusHistory');
+  const historyDeletes = historySheet ? deleteRowsByValue_(historySheet, ['historyId', 'leadId', 'previousStage', 'newStage', 'changedBy', 'changedAt', 'note', 'nextFollowUp'], 'leadId', id) : 0;
+  const enquiryDeleted = enquiryRowId ? deleteWebsiteEnquiry_(enquiryRowId) : false;
+
+  if (!leadDeleted && !enquiryDeleted) {
+    throw new Error(`Record not found: ${id}`);
+  }
+
+  return {
+    id,
+    leadDeleted,
+    enquiryDeleted,
+    linkedTasksDeleted: taskDeletes,
+    linkedInvoicesDeleted: invoiceDeletes,
+    historyRowsDeleted: historyDeletes
+  };
+}
+
+function deleteRecord_(entity, id) {
+  const config = getConfig_(entity);
+  const sheet = SpreadsheetApp.openById(CONFIG.spreadsheetId).getSheetByName(config.sheetName);
+  const rowNumber = findRowNumber_(sheet, config.headers, config.idColumn, id);
+  if (!rowNumber) throw new Error(`Record not found: ${id}`);
+  sheet.deleteRow(rowNumber);
+  return { id };
+}
+
+function deleteRowsByValue_(sheet, headers, columnName, value) {
+  const columnIndex = headers.indexOf(columnName);
+  if (!sheet || columnIndex === -1 || sheet.getLastRow() < 2) return 0;
+  const values = sheet.getRange(2, columnIndex + 1, sheet.getLastRow() - 1, 1).getValues();
+  let deleted = 0;
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (String(values[index][0]) === String(value)) {
+      sheet.deleteRow(index + 2);
+      deleted += 1;
+    }
+  }
+  return deleted;
+}
+
+function deleteWebsiteEnquiry_(rowId) {
+  const rowNumber = Number(rowId);
+  if (!Number.isFinite(rowNumber) || rowNumber < 2) return false;
+  const spreadsheet = SpreadsheetApp.openById(CONFIG.enquirySpreadsheetId);
+  const sheet = getFirstMatchingSheet_(spreadsheet, CONFIG.enquirySheetNames);
+  if (sheet.getLastRow() < rowNumber) return false;
+  sheet.deleteRow(rowNumber);
+  return true;
+}
+
+function extractEnquiryRowId_(id) {
+  const match = String(id || '').match(/^ENQ-(\d+)$/);
+  return match ? match[1] : '';
 }
 
 function getConfig_(entity) {

@@ -486,6 +486,17 @@ function App() {
     return result.record || record;
   };
 
+  const deleteRecord = async (entity, id) => {
+    if (!['connected', 'warning'].includes(syncStatus.state)) {
+      throw new Error('Google Sheets is not connected yet');
+    }
+
+    setSyncStatus({ state: 'saving', message: 'Deleting from Google Sheets' });
+    const result = await crmRequest('delete', entity, { id });
+    setSyncStatus({ state: 'connected', message: 'Deleted from Google Sheets' });
+    return result.deleted;
+  };
+
   const handleSyncError = (error) => {
     setSyncStatus({ state: 'error', message: error.message || 'Google Sheets save failed' });
   };
@@ -573,6 +584,20 @@ function App() {
     }
   };
 
+  const deleteLead = async (lead) => {
+    const confirmed = window.confirm(`Delete ${lead.name}? This removes the lead from CRM sheets, linked tasks, linked invoices, status history, and the enquiry sheet if this came from a website enquiry.`);
+    if (!confirmed) return;
+
+    try {
+      await deleteRecord(crmEntities.leads, lead.id);
+      setLeads((current) => current.filter((item) => item.id !== lead.id));
+      setTasks((current) => current.filter((task) => task.leadId !== lead.id));
+      setPayments((current) => current.filter((payment) => payment.leadId !== lead.id));
+    } catch (error) {
+      handleSyncError(error);
+    }
+  };
+
   const updateTask = async (id, status) => {
     const currentTask = tasks.find((task) => task.id === id);
     if (!currentTask) return;
@@ -581,6 +606,18 @@ function App() {
     try {
       const saved = await persistRecord(crmEntities.tasks, nextTask);
       setTasks((current) => current.map((task) => (task.id === id ? saved : task)));
+    } catch (error) {
+      handleSyncError(error);
+    }
+  };
+
+  const deleteTask = async (task) => {
+    const confirmed = window.confirm(`Delete task "${task.title}"? This removes it from the Tasks sheet.`);
+    if (!confirmed) return;
+
+    try {
+      await deleteRecord(crmEntities.tasks, task.id);
+      setTasks((current) => current.filter((item) => item.id !== task.id));
     } catch (error) {
       handleSyncError(error);
     }
@@ -855,13 +892,14 @@ function App() {
             setPriorityFilter={setPriorityFilter}
             leads={filteredLeads}
             updateLead={updateLead}
+            deleteLead={deleteLead}
             onAdd={() => setShowLeadForm(true)}
             onDownload={downloadCSV}
           />
         )}
 
         {active === 'tasks' && (
-          <TasksView tasks={tasks} leads={leads} updateTask={updateTask} onAdd={() => setShowTaskForm(true)} />
+          <TasksView tasks={tasks} leads={leads} updateTask={updateTask} deleteTask={deleteTask} onAdd={() => setShowTaskForm(true)} />
         )}
 
         {active === 'finance' && (
@@ -1026,7 +1064,7 @@ function Dashboard({ metrics, stageCounts, programMix, monthRevenue, leads, task
   );
 }
 
-function LeadsView({ query, setQuery, stageFilter, setStageFilter, priorityFilter, setPriorityFilter, leads, updateLead, onAdd, onDownload }) {
+function LeadsView({ query, setQuery, stageFilter, setStageFilter, priorityFilter, setPriorityFilter, leads, updateLead, deleteLead, onAdd, onDownload }) {
   return (
     <section className="screen-grid">
       <div className="toolbar">
@@ -1060,7 +1098,12 @@ function LeadsView({ query, setQuery, stageFilter, setStageFilter, priorityFilte
           <article className="lead-card" key={lead.id}>
             <div className="lead-card-top">
               <span>{lead.id}</span>
-              <PriorityPill value={lead.priority} />
+              <div className="card-actions">
+                <PriorityPill value={lead.priority} />
+                <button className="delete-button" type="button" onClick={() => deleteLead(lead)} aria-label={`Delete ${lead.name}`}>
+                  <X size={15} />
+                </button>
+              </div>
             </div>
             <h2>{lead.name}</h2>
             <p>{lead.goal} / {lead.program}</p>
@@ -1100,7 +1143,7 @@ function LeadsView({ query, setQuery, stageFilter, setStageFilter, priorityFilte
   );
 }
 
-function TasksView({ tasks, leads, updateTask, onAdd }) {
+function TasksView({ tasks, leads, updateTask, deleteTask, onAdd }) {
   const columns = ['Overdue', 'Due Today', 'Upcoming', 'Completed'];
   const leadLookup = Object.fromEntries(leads.map((lead) => [lead.id, lead]));
 
@@ -1124,9 +1167,14 @@ function TasksView({ tasks, leads, updateTask, onAdd }) {
             </div>
             {tasks.filter((task) => task.status === column).map((task) => (
               <article className="task-card" key={task.id}>
-                <div>
-                  <strong>{task.title}</strong>
-                  <span>{leadLookup[task.leadId]?.name || 'General'} / {task.type}</span>
+                <div className="task-card-top">
+                  <div>
+                    <strong>{task.title}</strong>
+                    <span>{leadLookup[task.leadId]?.name || 'General'} / {task.type}</span>
+                  </div>
+                  <button className="delete-button" type="button" onClick={() => deleteTask(task)} aria-label={`Delete task ${task.title}`}>
+                    <X size={15} />
+                  </button>
                 </div>
                 <div className="task-meta">
                   <span>{task.owner}</span>

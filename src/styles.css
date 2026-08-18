@@ -601,6 +601,7 @@ button {
 }
 
 .lead-card-top,
+.task-card-top,
 .lead-footer,
 .task-meta,
 .client-progress {
@@ -615,6 +616,44 @@ button {
 .task-meta {
   color: var(--muted);
   font-size: 12px;
+}
+
+.card-actions,
+.task-card-top {
+  min-width: 0;
+}
+
+.card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-card-top {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.task-card-top > div {
+  min-width: 0;
+}
+
+.delete-button {
+  width: 31px;
+  height: 31px;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #be123c;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.delete-button:hover {
+  background: #ffe4e6;
+  border-color: #fb7185;
 }
 
 .inline-money-field {
