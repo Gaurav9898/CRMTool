@@ -231,7 +231,7 @@ function setupSheets_() {
 }
 
 function list_(entity) {
-  if (entity === 'websiteEnquiries') {
+  if (entity === 'websiteEnquiries' || entity === 'websiteEnquiry' || entity === 'enquiries') {
     return listWebsiteEnquiries_();
   }
 

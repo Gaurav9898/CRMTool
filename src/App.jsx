@@ -218,6 +218,11 @@ const navItems = [
 ];
 
 const today = '2026-08-18';
+const demoMode = import.meta.env.VITE_ENABLE_DEMO_DATA === 'true';
+const initialLeads = demoMode ? seedLeads : [];
+const initialTasks = demoMode ? seedTasks : [];
+const initialPayments = demoMode ? seedPayments : [];
+const initialExpenses = demoMode ? seedExpenses : [];
 
 const crmEntities = {
   leads: 'leads',
@@ -335,6 +340,14 @@ function mergeLeadsWithEnquiries(sheetLeads, websiteEnquiries) {
   return merged;
 }
 
+async function optionalCrmRequest(action, entity, payload = {}) {
+  try {
+    return await crmRequest(action, entity, payload);
+  } catch (error) {
+    return { ok: false, records: [], error: error.message };
+  }
+}
+
 function leadOptionLabel(lead) {
   return `${lead.name} (${lead.id})`;
 }
@@ -359,10 +372,10 @@ function isoNow() {
 function App() {
   const [active, setActive] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia('(min-width: 861px)').matches);
-  const [leads, setLeads] = useState(seedLeads);
-  const [tasks, setTasks] = useState(seedTasks);
-  const [payments, setPayments] = useState(seedPayments);
-  const [expenses, setExpenses] = useState(seedExpenses);
+  const [leads, setLeads] = useState(initialLeads);
+  const [tasks, setTasks] = useState(initialTasks);
+  const [payments, setPayments] = useState(initialPayments);
+  const [expenses, setExpenses] = useState(initialExpenses);
   const [syncStatus, setSyncStatus] = useState({ state: 'checking', message: 'Checking Google Sheets' });
   const [query, setQuery] = useState('');
   const [stageFilter, setStageFilter] = useState('All');
@@ -383,22 +396,30 @@ function App() {
           throw new Error(health.error || 'Google Sheets API is not configured');
         }
 
-        const [sheetLeads, sheetTasks, sheetPayments, sheetExpenses, websiteEnquiries] = await Promise.all([
+        const [sheetLeads, sheetTasks, sheetPayments, sheetExpenses] = await Promise.all([
           crmRequest('list', crmEntities.leads),
           crmRequest('list', crmEntities.tasks),
           crmRequest('list', crmEntities.payments),
-          crmRequest('list', crmEntities.expenses),
-          crmRequest('list', crmEntities.websiteEnquiries)
+          crmRequest('list', crmEntities.expenses)
         ]);
+        const websiteEnquiries = await optionalCrmRequest('list', crmEntities.websiteEnquiries);
 
         if (cancelled) return;
         setLeads(mergeLeadsWithEnquiries(sheetLeads.records || [], websiteEnquiries.records || []));
         setTasks(sheetTasks.records || []);
         setPayments(sheetPayments.records || []);
         setExpenses(sheetExpenses.records || []);
-        setSyncStatus({ state: 'connected', message: 'Google Sheets connected' });
+        setSyncStatus(
+          websiteEnquiries.ok === false
+            ? { state: 'setup', message: `CRM data loaded. Website enquiry import needs Apps Script redeploy: ${websiteEnquiries.error}` }
+            : { state: 'connected', message: 'Google Sheets connected' }
+        );
       } catch (error) {
         if (cancelled) return;
+        setLeads([]);
+        setTasks([]);
+        setPayments([]);
+        setExpenses([]);
         setSyncStatus({ state: 'setup', message: error.message });
       }
     }
@@ -998,6 +1019,9 @@ function LeadsView({ query, setQuery, stageFilter, setStageFilter, priorityFilte
       </div>
 
       <section className="lead-grid">
+        {leads.length === 0 && (
+          <EmptyState title="No leads loaded" message="Connect or redeploy the Apps Script to show CRM and website enquiry leads here." />
+        )}
         {leads.map((lead) => (
           <article className="lead-card" key={lead.id}>
             <div className="lead-card-top">
@@ -1055,6 +1079,9 @@ function TasksView({ tasks, leads, updateTask, onAdd }) {
         </button>
       </div>
       <div className="task-board">
+        {tasks.length === 0 && (
+          <EmptyState title="No tasks loaded" message="Tasks will appear after the Tasks sheet has rows." />
+        )}
         {columns.map((column) => (
           <section className="task-column" key={column}>
             <div className="column-title">
@@ -1132,6 +1159,7 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment,
           <span>Paid</span>
           <span>Status</span>
         </div>
+        {payments.length === 0 && <EmptyTableRow message="No invoices loaded from FinanceInvoices." />}
         {payments.map((item) => (
           <div className="table-row" key={item.id}>
             <span>{item.id}</span>
@@ -1158,6 +1186,7 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment,
           <span>Tax</span>
           <span>Status</span>
         </div>
+        {expenses.length === 0 && <EmptyTableRow message="No expenses loaded from FinanceExpenses." type="expense" />}
         {expenses.map((item) => (
           <div className="expense-row" key={item.id}>
             <span>{item.id}</span>
@@ -1221,6 +1250,7 @@ function RemindersView({ leads, tasks }) {
           <span>Gmail</span>
           <span>Calendar</span>
         </div>
+        {reminderRows.length === 0 && <EmptyTableRow message="No pending reminders loaded from Tasks." type="reminder" />}
         {reminderRows.map((item) => (
           <div className="reminder-row" key={item.id}>
             <strong>{item.title}</strong>
@@ -1258,6 +1288,9 @@ function ClientsView({ leads }) {
   return (
     <section className="screen-grid">
       <section className="lead-grid">
+        {leads.length === 0 && (
+          <EmptyState title="No active clients loaded" message="Converted leads will appear here." />
+        )}
         {leads.map((client) => (
           <article className="lead-card client-card" key={client.id}>
             <div className="lead-card-top">
@@ -1487,6 +1520,24 @@ function Metric({ icon: Icon, label, value, note, tone }) {
       <strong>{value}</strong>
       <small>{note}</small>
     </article>
+  );
+}
+
+function EmptyState({ title, message }) {
+  return (
+    <article className="empty-state">
+      <strong>{title}</strong>
+      <span>{message}</span>
+    </article>
+  );
+}
+
+function EmptyTableRow({ message, type = 'invoice' }) {
+  const className = type === 'expense' ? 'expense-row empty-row' : type === 'reminder' ? 'reminder-row empty-row' : 'table-row empty-row';
+  return (
+    <div className={className}>
+      <span>{message}</span>
+    </div>
   );
 }
 
