@@ -1898,11 +1898,11 @@ function PaymentModal({ onClose, onSubmit, leads }) {
 
   return (
     <ModalShell title="Add Invoice" onClose={onClose}>
-      <form className="modal-form" onSubmit={onSubmit}>
+      <form className="modal-form" onSubmit={onSubmit} noValidate>
         <Select name="leadId" label="Lead" options={leadOptions} value={leadId} onChange={(event) => setLeadId(event.target.value)} />
         <Input key={`client-${leadId}`} name="client" label="Invoice To" defaultValue={selectedLead?.name || ''} required />
-        <Input key={`phone-${leadId}`} name="clientPhone" label="Client Phone" defaultValue={selectedLead?.phone || ''} required />
-        <Input key={`email-${leadId}`} name="clientEmail" label="Client Email" type="email" defaultValue={selectedLead?.email || ''} />
+        <Input key={`phone-${leadId}`} name="clientPhone" label="Client Phone" defaultValue={selectedLead?.phone || ''} />
+        <Input key={`email-${leadId}`} name="clientEmail" label="Client Email" defaultValue={selectedLead?.email || ''} />
         <label key={`address-${leadId}`} className="field full-field">
           <span>Billing Address</span>
           <textarea name="billingAddress" rows="2" defaultValue={selectedLead?.city || ''} />
