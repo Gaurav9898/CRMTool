@@ -197,15 +197,6 @@ const seedExpenses = [
   { id: 'EXP-404', category: 'Professional Fees', description: 'Accounting and tax filing reserve', amount: 5000, date: '2026-08-18', taxRate: 18, status: 'Planned' }
 ];
 
-const monthRevenue = [
-  { label: 'Mar', value: 42000 },
-  { label: 'Apr', value: 58000 },
-  { label: 'May', value: 52000 },
-  { label: 'Jun', value: 76000 },
-  { label: 'Jul', value: 84000 },
-  { label: 'Aug', value: 97000 }
-];
-
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'leads', label: 'Leads', icon: UsersRound },
@@ -234,6 +225,13 @@ const crmEntities = {
 
 function formatMoney(value) {
   return `Rs ${value.toLocaleString('en-IN')}`;
+}
+
+function formatChartValue(value) {
+  if (!value) return '0';
+  if (value >= 100000) return `${Math.round(value / 100000)}L`;
+  if (value >= 1000) return `${Math.round(value / 1000)}k`;
+  return String(value);
 }
 
 function nextId(prefix, list) {
@@ -369,6 +367,36 @@ function isoNow() {
   return new Date().toISOString();
 }
 
+function monthKey(value) {
+  const normalized = normalizeDateOnly(value, today);
+  return normalized.slice(0, 7);
+}
+
+function monthLabel(key) {
+  return new Date(`${key}-01T00:00:00`).toLocaleString('en-IN', { month: 'short' });
+}
+
+function buildRevenueTrend(payments) {
+  const base = new Date(`${today}T00:00:00`);
+  const months = Array.from({ length: 6 }, (_, index) => {
+    const date = new Date(base);
+    date.setMonth(base.getMonth() - (5 - index));
+    const key = date.toISOString().slice(0, 7);
+    return { key, label: monthLabel(key), value: 0 };
+  });
+
+  const monthMap = new Map(months.map((item) => [item.key, item]));
+  payments.forEach((payment) => {
+    const paid = clampMoney(payment.paid);
+    if (!paid) return;
+    const key = monthKey(payment.paidAt || payment.date || payment.due || payment.createdAt);
+    const month = monthMap.get(key);
+    if (month) month.value += paid;
+  });
+
+  return months;
+}
+
 function App() {
   const [active, setActive] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia('(min-width: 861px)').matches);
@@ -411,7 +439,12 @@ function App() {
         setExpenses(sheetExpenses.records || []);
         setSyncStatus(
           websiteEnquiries.ok === false
-            ? { state: 'setup', message: `CRM data loaded. Website enquiry import needs Apps Script redeploy: ${websiteEnquiries.error}` }
+            ? {
+                state: 'warning',
+                message: websiteEnquiries.error?.includes('Unsupported entity')
+                  ? 'CRM sheets are connected. Website enquiries are still calling an old Apps Script Web App URL in Cloudflare. Update GOOGLE_SHEETS_WEB_APP_URL to the latest /exec URL.'
+                  : `CRM sheets are connected. Website enquiry import needs attention: ${websiteEnquiries.error}`
+              }
             : { state: 'connected', message: 'Google Sheets connected' }
         );
       } catch (error) {
@@ -432,7 +465,7 @@ function App() {
   }, []);
 
   const persistRecord = async (entity, record) => {
-    if (syncStatus.state !== 'connected') {
+    if (!['connected', 'warning'].includes(syncStatus.state)) {
       throw new Error('Google Sheets is not connected yet');
     }
 
@@ -443,7 +476,7 @@ function App() {
   };
 
   const createRecord = async (entity, record) => {
-    if (syncStatus.state !== 'connected') {
+    if (!['connected', 'warning'].includes(syncStatus.state)) {
       throw new Error('Google Sheets is not connected yet');
     }
 
@@ -499,6 +532,8 @@ function App() {
       return matchesQuery && matchesStage && matchesPriority;
     });
   }, [leads, priorityFilter, query, stageFilter]);
+
+  const revenueTrend = useMemo(() => buildRevenueTrend(payments), [payments]);
 
   const stageCounts = stages.map((stage) => ({
     ...stage,
@@ -804,7 +839,7 @@ function App() {
             metrics={metrics}
             stageCounts={stageCounts}
             programMix={programMix}
-            monthRevenue={monthRevenue}
+            monthRevenue={revenueTrend}
             leads={leads}
             tasks={tasks}
             setActive={setActive}
@@ -835,7 +870,7 @@ function App() {
             payments={payments}
             expenses={expenses}
             metrics={metrics}
-            monthRevenue={monthRevenue}
+            monthRevenue={revenueTrend}
             updatePayment={updatePayment}
             updateExpense={updateExpense}
             onAddInvoice={() => setShowPaymentForm(true)}
@@ -863,7 +898,7 @@ function App() {
 }
 
 function Dashboard({ metrics, stageCounts, programMix, monthRevenue, leads, tasks, setActive }) {
-  const maxRevenue = Math.max(...monthRevenue.map((item) => item.value));
+  const maxRevenue = Math.max(...monthRevenue.map((item) => item.value), 1);
   const maxProgram = Math.max(...programMix.map((item) => item.count), 1);
   const priorityLeads = leads.filter((lead) => lead.priority === 'Hot').slice(0, 3);
 
@@ -892,10 +927,10 @@ function Dashboard({ metrics, stageCounts, programMix, monthRevenue, leads, task
             {monthRevenue.map((item) => (
               <div className="bar-column" key={item.label}>
                 <div className="bar-track">
-                  <div className="bar-fill" style={{ height: `${Math.max((item.value / maxRevenue) * 100, 8)}%` }} />
+                  <div className="bar-fill" style={{ height: item.value > 0 ? `${Math.max((item.value / maxRevenue) * 100, 8)}%` : '0%' }} />
                 </div>
                 <strong>{item.label}</strong>
-                <span>{Math.round(item.value / 1000)}k</span>
+                <span>{formatChartValue(item.value)}</span>
               </div>
             ))}
           </div>
@@ -1111,7 +1146,7 @@ function TasksView({ tasks, leads, updateTask, onAdd }) {
 }
 
 function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment, updateExpense, onAddInvoice, onAddExpense }) {
-  const maxRevenue = Math.max(...monthRevenue.map((item) => item.value));
+  const maxRevenue = Math.max(...monthRevenue.map((item) => item.value), 1);
 
   return (
     <section className="screen-grid">
@@ -1143,7 +1178,7 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment,
           {monthRevenue.map((item) => (
             <div key={item.label}>
               <span>{item.label}</span>
-              <i style={{ width: `${Math.max((item.value / maxRevenue) * 100, 8)}%` }} />
+              <i style={{ width: item.value > 0 ? `${Math.max((item.value / maxRevenue) * 100, 8)}%` : '0%' }} />
               <strong>{formatMoney(item.value)}</strong>
             </div>
           ))}

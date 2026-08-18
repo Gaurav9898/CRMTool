@@ -221,6 +221,11 @@ button {
   color: #1d4ed8;
 }
 
+.sync-notice.warning {
+  background: #fffbeb;
+  color: #92400e;
+}
+
 .sync-notice.error {
   background: #fff1f2;
   color: #be123c;
