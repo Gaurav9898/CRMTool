@@ -1,4 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Button as AntButton, Upload } from 'antd';
+import { UploadOutlined } from '@ant-design/icons';
+import 'antd/dist/reset.css';
 import {
   Activity,
   BadgeIndianRupee,
@@ -260,12 +263,13 @@ function clampMoney(value) {
 }
 
 function readAttachmentFile(file) {
-  if (!file || typeof file === 'string' || !file.name || file.size === 0) {
+  const selectedFile = file?.originFileObj || file;
+  if (!selectedFile || typeof selectedFile === 'string' || !selectedFile.name || selectedFile.size === 0) {
     return Promise.resolve(null);
   }
 
   const maxSize = 8 * 1024 * 1024;
-  if (file.size > maxSize) {
+  if (selectedFile.size > maxSize) {
     return Promise.reject(new Error('Attachment must be 8 MB or smaller.'));
   }
 
@@ -274,13 +278,13 @@ function readAttachmentFile(file) {
     reader.onload = () => {
       const result = String(reader.result || '');
       resolve({
-        name: file.name,
-        mimeType: file.type || 'application/octet-stream',
+        name: selectedFile.name,
+        mimeType: selectedFile.type || 'application/octet-stream',
         base64: result.includes(',') ? result.split(',').pop() : result
       });
     };
     reader.onerror = () => reject(new Error('Could not read the selected attachment.'));
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(selectedFile);
   });
 }
 
@@ -385,6 +389,15 @@ function compactLoadError(message) {
 
 function leadOptionLabel(lead) {
   return `${lead.name} (${lead.id})`;
+}
+
+function shortFileError(message, fallback) {
+  if (!message) return fallback;
+  if (message.includes('DriveApp.getFolderById') || message.includes('Required permissions')) {
+    return 'Drive permission needed';
+  }
+  if (message.length > 28) return `${fallback}: ${message.slice(0, 24)}...`;
+  return message;
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
@@ -867,14 +880,14 @@ function App() {
     }
   };
 
-  const addExpense = async (event) => {
+  const addExpense = async (event, selectedReceiptFile) => {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     setSavingExpense(true);
     try {
       setSyncStatus({ state: 'saving', message: 'Preparing expense receipt' });
-      const attachment = await readAttachmentFile(form.get('receiptFile'));
+      const attachment = await readAttachmentFile(selectedReceiptFile || form.get('receiptFile'));
       const newExpense = {
         id: nextId('EXP', expenses),
         category: form.get('category'),
@@ -1381,7 +1394,7 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment,
             {item.pdfUrl ? (
               <a className="inline-link" href={item.pdfUrl} target="_blank" rel="noreferrer">Open</a>
             ) : item.pdfError ? (
-              <span className="muted-cell error-cell" title={item.pdfError}>PDF error</span>
+              <span className="muted-cell error-cell" title={item.pdfError}>{shortFileError(item.pdfError, 'PDF error')}</span>
             ) : (
               <span className="muted-cell">Not created</span>
             )}
@@ -1416,7 +1429,7 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment,
             {item.attachmentUrl ? (
               <a className="inline-link" href={item.attachmentUrl} target="_blank" rel="noreferrer">Open</a>
             ) : item.attachmentError ? (
-              <span className="muted-cell error-cell" title={item.attachmentError}>Upload error</span>
+              <span className="muted-cell error-cell" title={item.attachmentError}>{shortFileError(item.attachmentError, 'Upload error')}</span>
             ) : (
               <span className="muted-cell">None</span>
             )}
@@ -1943,9 +1956,12 @@ function PaymentModal({ onClose, onSubmit, leads }) {
 }
 
 function ExpenseModal({ onClose, onSubmit, isSaving }) {
+  const [receiptFiles, setReceiptFiles] = useState([]);
+  const selectedReceiptFile = receiptFiles[0]?.originFileObj || receiptFiles[0] || null;
+
   return (
     <ModalShell title="Add Expense" onClose={onClose}>
-      <form className="modal-form" onSubmit={onSubmit} noValidate>
+      <form className="modal-form" onSubmit={(event) => onSubmit(event, selectedReceiptFile)} noValidate>
         <Select name="category" label="Category" options={['Marketing', 'Tools & Software', 'Operations', 'Professional Fees', 'Payouts', 'Taxes', 'Other']} />
         <Input name="description" label="Description" required />
         <Input name="amount" label="Amount (Rs)" type="number" min="0" step="1" required />
@@ -1953,7 +1969,12 @@ function ExpenseModal({ onClose, onSubmit, isSaving }) {
         <Input name="date" label="Date" type="date" required />
         <Select name="status" label="Status" options={['Paid', 'Pending', 'Planned']} />
         <Input name="paymentMode" label="Payment Mode" defaultValue="UPI / Bank Transfer" />
-        <Input name="receiptFile" label="Upload Invoice / Receipt" type="file" accept="application/pdf,image/*" />
+        <UploadField
+          label="Upload Invoice / Receipt"
+          fileList={receiptFiles}
+          disabled={isSaving}
+          onChange={(nextFiles) => setReceiptFiles(nextFiles)}
+        />
         <label className="field full-field">
           <span>Notes</span>
           <textarea name="notes" rows="2" />
@@ -1967,6 +1988,26 @@ function ExpenseModal({ onClose, onSubmit, isSaving }) {
         </div>
       </form>
     </ModalShell>
+  );
+}
+
+function UploadField({ label, fileList, onChange, disabled }) {
+  return (
+    <div className="field upload-field">
+      <span>{label}</span>
+      <Upload
+        accept="application/pdf,image/*"
+        beforeUpload={() => false}
+        fileList={fileList}
+        maxCount={1}
+        onChange={({ fileList: nextFileList }) => onChange(nextFileList.slice(-1))}
+        onRemove={() => onChange([])}
+      >
+        <AntButton icon={<UploadOutlined />} disabled={disabled}>
+          Upload file
+        </AntButton>
+      </Upload>
+    </div>
   );
 }
 

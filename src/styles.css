@@ -1129,6 +1129,26 @@ button {
   padding: 10px;
 }
 
+.upload-field .ant-upload-wrapper {
+  min-width: 0;
+}
+
+.upload-field .ant-btn {
+  width: 100%;
+  min-height: 42px;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 800;
+}
+
+.upload-field .ant-upload {
+  width: 100%;
+}
+
+.upload-field .ant-upload-list {
+  margin-top: 8px;
+}
+
 .full-field,
 .modal-actions {
   grid-column: 1 / -1;

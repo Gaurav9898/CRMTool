@@ -235,6 +235,22 @@ const ENTITY_CONFIG = {
   }
 };
 
+function authorizeStrongHerCRM() {
+  const crmSpreadsheet = SpreadsheetApp.openById(CONFIG.spreadsheetId);
+  const enquirySpreadsheet = SpreadsheetApp.openById(CONFIG.enquirySpreadsheetId);
+  const invoiceFolder = DriveApp.getFolderById(CONFIG.invoiceFolderId);
+  const expenseFolder = DriveApp.getFolderById(CONFIG.expenseFolderId);
+  UrlFetchApp.fetch(CONFIG.logoUrl, { muteHttpExceptions: true });
+
+  return [
+    `CRM sheet: ${crmSpreadsheet.getName()}`,
+    `Enquiry sheet: ${enquirySpreadsheet.getName()}`,
+    `Invoice folder: ${invoiceFolder.getName()}`,
+    `Expense folder: ${expenseFolder.getName()}`,
+    'StrongHer CRM authorization is ready.'
+  ].join('\n');
+}
+
 function doGet() {
   setupSheets_();
   return json_({ ok: true, configured: true });
