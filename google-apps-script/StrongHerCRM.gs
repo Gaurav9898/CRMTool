@@ -553,13 +553,15 @@ function invoiceHtml_(invoice) {
     <meta charset="UTF-8">
     <style>
       body { margin: 0; padding: 44px 48px; color: #14110f; background: #f7f6f3; font-family: Arial, Helvetica, sans-serif; font-size: 12px; }
-      .page { max-width: 720px; margin: 0 auto; }
+      .page { max-width: 720px; margin: 0 auto; position: relative; overflow: hidden; }
+      .content { position: relative; z-index: 1; }
+      .watermark { position: absolute; top: 168px; left: 50%; transform: translateX(-50%); width: 420px; height: 420px; opacity: 0.045; z-index: 0; text-align: center; }
+      .watermark img { width: 100%; height: 100%; object-fit: contain; }
       .rule { height: 1px; background: #292524; margin: 0 0 14px; opacity: 0.7; }
-      .header { display: flex; align-items: center; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid #292524; }
+      .header { display: flex; align-items: center; justify-content: space-between; min-height: 146px; padding-bottom: 14px; border-bottom: 1px solid #292524; }
       .invoice-title { letter-spacing: 7px; font-size: 24px; }
-      .brand { display: flex; align-items: center; gap: 12px; text-align: right; }
-      .brand img { width: 46px; height: 46px; object-fit: contain; border-radius: 8px; background: #fff; }
-      .brand strong { display: block; letter-spacing: 7px; font-size: 10px; font-weight: 500; text-transform: uppercase; }
+      .brand { display: flex; align-items: center; justify-content: flex-end; text-align: right; }
+      .brand img { width: 138px; height: 138px; object-fit: contain; border-radius: 16px; background: #fff; }
       .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 42px; margin-top: 28px; }
       .meta p { margin: 0 0 8px; letter-spacing: 2px; text-transform: uppercase; }
       .meta strong { font-weight: 600; }
@@ -569,8 +571,9 @@ function invoiceHtml_(invoice) {
       .items td { padding: 20px 10px 30px; text-align: center; vertical-align: top; line-height: 1.35; }
       .description { width: 36%; }
       .validity { display: block; margin-top: 18px; font-size: 11px; }
-      .totals { display: grid; grid-template-columns: 1fr 210px; gap: 28px; margin-top: 34px; min-height: 188px; }
-      .thanks { align-self: end; width: 94px; height: 94px; margin-left: 26px; border: 8px solid #f1ebe8; border-radius: 999px; display: grid; place-items: center; text-align: center; font-size: 18px; line-height: 1; }
+      .totals { display: grid; grid-template-columns: 1fr 210px; gap: 28px; margin-top: 34px; min-height: 210px; }
+      .thanks-stamp { align-self: end; width: 176px; height: 176px; margin-left: 4px; border: 14px solid #f1ebe8; border-radius: 44% 56% 47% 53% / 55% 43% 57% 45%; background: #fffaf7; display: table; text-align: center; color: #050505; }
+      .thanks-stamp div { display: table-cell; vertical-align: middle; font-size: 44px; line-height: 0.96; font-weight: 300; }
       .summary { display: grid; gap: 14px; align-content: start; }
       .summary div { display: flex; justify-content: space-between; gap: 18px; }
       .summary strong { font-size: 14px; }
@@ -582,78 +585,78 @@ function invoiceHtml_(invoice) {
   </head>
   <body>
     <main class="page">
-      <div class="rule"></div>
-      <section class="header">
-        <div class="invoice-title">INVOICE</div>
-        <div class="brand">
+      <div class="watermark"><img src="${escapeHtml_(logoUrl)}" alt=""></div>
+      <div class="content">
+        <div class="rule"></div>
+        <section class="header">
+          <div class="invoice-title">INVOICE</div>
+          <div class="brand">
+            <img src="${escapeHtml_(logoUrl)}" alt="StrongHer logo">
+          </div>
+        </section>
+
+        <section class="meta">
           <div>
-            <strong>${escapeHtml_(CONFIG.businessName)}</strong>
+            <p>NO. <strong>${escapeHtml_(invoice.id)}</strong></p>
+            <p>INVOICE TO:</p>
+            <div class="client-lines">
+              ${escapeHtml_(invoice.client)}<br>
+              ${escapeHtml_(invoice.clientPhone || '')}<br>
+              ${escapeHtml_(invoice.clientEmail || '')}<br>
+              ${lineBreaks_(invoice.billingAddress || '')}
+            </div>
           </div>
-          <img src="${escapeHtml_(logoUrl)}" alt="StrongHer logo">
-        </div>
-      </section>
-
-      <section class="meta">
-        <div>
-          <p>NO. <strong>${escapeHtml_(invoice.id)}</strong></p>
-          <p>INVOICE TO:</p>
-          <div class="client-lines">
-            ${escapeHtml_(invoice.client)}<br>
-            ${escapeHtml_(invoice.clientPhone || '')}<br>
-            ${escapeHtml_(invoice.clientEmail || '')}<br>
-            ${lineBreaks_(invoice.billingAddress || '')}
+          <div>
+            <p>INVOICE DATE : <strong>${invoiceDate}</strong></p>
+            <p>PAYMENT STATUS : <strong>${escapeHtml_(invoice.status || 'Pending')}</strong></p>
+            ${paymentDate ? `<p>PAYMENT DATE : <strong>${paymentDate}</strong></p>` : ''}
+            ${dueDate ? `<p>DUE DATE : <strong>${dueDate}</strong></p>` : ''}
+            ${invoice.paymentMode ? `<p>PAYMENT MODE : <strong>${escapeHtml_(invoice.paymentMode)}</strong></p>` : ''}
           </div>
-        </div>
-        <div>
-          <p>INVOICE DATE : <strong>${invoiceDate}</strong></p>
-          <p>PAYMENT STATUS : <strong>${escapeHtml_(invoice.status || 'Pending')}</strong></p>
-          ${paymentDate ? `<p>PAYMENT DATE : <strong>${paymentDate}</strong></p>` : ''}
-          ${dueDate ? `<p>DUE DATE : <strong>${dueDate}</strong></p>` : ''}
-          ${invoice.paymentMode ? `<p>PAYMENT MODE : <strong>${escapeHtml_(invoice.paymentMode)}</strong></p>` : ''}
-        </div>
-      </section>
+        </section>
 
-      <table class="items">
-        <thead>
-          <tr>
-            <th class="description">Description</th>
-            <th>Price</th>
-            <th>Discount</th>
-            <th>Subtotal</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td class="description">
-              ${escapeHtml_(invoice.description || invoice.program || 'StrongHer coaching package')}
-              ${validFrom || validUntil ? `<span class="validity">Validity:<br>${validFrom || '-'} - ${validUntil || '-'}</span>` : ''}
-            </td>
-            <td>${formatCurrency_(invoice.amount)}</td>
-            <td>${escapeHtml_(discountLabel)}<br>${Number(invoice.discountAmount || 0) ? formatCurrency_(invoice.discountAmount) : ''}</td>
-            <td>${formatCurrency_(invoice.subtotal)}</td>
-          </tr>
-        </tbody>
-      </table>
+        <table class="items">
+          <thead>
+            <tr>
+              <th class="description">Description</th>
+              <th>Price</th>
+              <th>Discount</th>
+              <th>Subtotal</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="description">
+                ${escapeHtml_(invoice.description || invoice.program || 'StrongHer coaching package')}
+                ${validFrom || validUntil ? `<span class="validity">Validity:<br>${validFrom || '-'} - ${validUntil || '-'}</span>` : ''}
+              </td>
+              <td>${formatCurrency_(invoice.amount)}</td>
+              <td>${escapeHtml_(discountLabel)}<br>${Number(invoice.discountAmount || 0) ? formatCurrency_(invoice.discountAmount) : ''}</td>
+              <td>${formatCurrency_(invoice.subtotal)}</td>
+            </tr>
+          </tbody>
+        </table>
 
-      <section class="totals">
-        <div class="thanks">Thank<br>you</div>
-        <div class="summary">
-          <div><span>Sub-total :</span><strong>${formatCurrency_(invoice.subtotal)}</strong></div>
-          <div><span>taxes :</span><strong>${taxLabel}${Number(invoice.taxAmount || 0) ? ` / ${formatCurrency_(invoice.taxAmount)}` : ''}</strong></div>
-          <div><span>Total :</span><strong>${formatCurrency_(invoice.total)}</strong></div>
-          <div><span>Paid :</span><strong>${formatCurrency_(invoice.paid)}</strong></div>
-          <div><span>Balance :</span><strong>${formatCurrency_(balance)}</strong></div>
-        </div>
-      </section>
+        <section class="totals">
+          <div class="thanks-stamp"><div>Thank<br>you</div></div>
+          <div class="summary">
+            <div><span>Sub-total :</span><strong>${formatCurrency_(invoice.subtotal)}</strong></div>
+            <div><span>taxes :</span><strong>${taxLabel}${Number(invoice.taxAmount || 0) ? ` / ${formatCurrency_(invoice.taxAmount)}` : ''}</strong></div>
+            <div><span>Total :</span><strong>${formatCurrency_(invoice.total)}</strong></div>
+            <div><span>Paid :</span><strong>${formatCurrency_(invoice.paid)}</strong></div>
+            <div><span>Balance :</span><strong>${formatCurrency_(balance)}</strong></div>
+          </div>
+        </section>
 
-      <section class="footer">
-        <div class="note">${lineBreaks_(invoice.notes || '')}</div>
-        <div class="signature">
-          <strong>${escapeHtml_(CONFIG.businessOwner)}</strong><br>
-          ${escapeHtml_(CONFIG.businessEmail)}<br>
-          ${escapeHtml_(CONFIG.businessPhone)}
-        </div>
-      </section>
+        <section class="footer">
+          <div class="note">${lineBreaks_(invoice.notes || '')}</div>
+          <div class="signature">
+            <strong>${escapeHtml_(CONFIG.businessOwner)}</strong><br>
+            ${escapeHtml_(CONFIG.businessEmail)}<br>
+            ${escapeHtml_(CONFIG.businessPhone)}
+          </div>
+        </section>
+      </div>
     </main>
   </body>
 </html>`;
