@@ -387,7 +387,7 @@ function leadOptionLabel(lead) {
   return `${lead.name} (${lead.id})`;
 }
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
@@ -468,6 +468,7 @@ function App() {
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
+  const [savingExpense, setSavingExpense] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -559,13 +560,13 @@ function App() {
     return result.record || record;
   };
 
-  const createRecord = async (entity, record) => {
+  const createRecord = async (entity, record, options = {}) => {
     if (!['connected', 'warning'].includes(syncStatus.state)) {
       throw new Error('Google Sheets is not connected yet');
     }
 
     setSyncStatus({ state: 'saving', message: 'Saving to Google Sheets' });
-    const result = await crmRequest('create', entity, { record });
+    const result = await crmRequest('create', entity, { record }, options);
     setSyncStatus({ state: 'connected', message: 'Saved to Google Sheets' });
     return result.record || record;
   };
@@ -870,7 +871,9 @@ function App() {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    setSavingExpense(true);
     try {
+      setSyncStatus({ state: 'saving', message: 'Preparing expense receipt' });
       const attachment = await readAttachmentFile(form.get('receiptFile'));
       const newExpense = {
         id: nextId('EXP', expenses),
@@ -886,12 +889,14 @@ function App() {
         createdAt: isoNow(),
         updatedAt: isoNow()
       };
-      const saved = await createRecord(crmEntities.expenses, newExpense);
+      const saved = await createRecord(crmEntities.expenses, newExpense, { timeoutMs: attachment ? 90000 : undefined });
       setExpenses((current) => [saved, ...current]);
       setShowExpenseForm(false);
       formElement.reset();
     } catch (error) {
       handleSyncError(error);
+    } finally {
+      setSavingExpense(false);
     }
   };
 
@@ -1046,7 +1051,7 @@ function App() {
       {showLeadForm && <LeadModal onClose={() => setShowLeadForm(false)} onSubmit={addLead} />}
       {showTaskForm && <TaskModal onClose={() => setShowTaskForm(false)} onSubmit={addTask} leads={leads} />}
       {showPaymentForm && <PaymentModal onClose={() => setShowPaymentForm(false)} onSubmit={addPayment} leads={leads} />}
-      {showExpenseForm && <ExpenseModal onClose={() => setShowExpenseForm(false)} onSubmit={addExpense} />}
+      {showExpenseForm && <ExpenseModal onClose={() => setShowExpenseForm(false)} onSubmit={addExpense} isSaving={savingExpense} />}
     </div>
   );
 }
@@ -1937,10 +1942,10 @@ function PaymentModal({ onClose, onSubmit, leads }) {
   );
 }
 
-function ExpenseModal({ onClose, onSubmit }) {
+function ExpenseModal({ onClose, onSubmit, isSaving }) {
   return (
     <ModalShell title="Add Expense" onClose={onClose}>
-      <form className="modal-form" onSubmit={onSubmit}>
+      <form className="modal-form" onSubmit={onSubmit} noValidate>
         <Select name="category" label="Category" options={['Marketing', 'Tools & Software', 'Operations', 'Professional Fees', 'Payouts', 'Taxes', 'Other']} />
         <Input name="description" label="Description" required />
         <Input name="amount" label="Amount (Rs)" type="number" min="0" step="1" required />
@@ -1954,10 +1959,10 @@ function ExpenseModal({ onClose, onSubmit }) {
           <textarea name="notes" rows="2" />
         </label>
         <div className="modal-actions">
-          <button className="ghost-button" type="button" onClick={onClose}>Cancel</button>
-          <button className="primary-button" type="submit">
+          <button className="ghost-button" type="button" onClick={onClose} disabled={isSaving}>Cancel</button>
+          <button className="primary-button" type="submit" disabled={isSaving}>
             <Plus size={16} />
-            Save Expense
+            {isSaving ? 'Saving Expense...' : 'Save Expense'}
           </button>
         </div>
       </form>

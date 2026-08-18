@@ -15,7 +15,7 @@ function getSheetsUrl(env) {
   return env.GOOGLE_SHEETS_WEB_APP_URL || env.SHEETS_WEB_APP_URL || '';
 }
 
-async function fetchWithTimeout(url, options, timeoutMs = 55000) {
+async function fetchWithTimeout(url, options, timeoutMs = 90000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
