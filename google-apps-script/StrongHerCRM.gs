@@ -1,7 +1,7 @@
 const CONFIG = {
   spreadsheetId: '1jyrihEYdXq4Mz_Exerbl1GlA8wmdH3jQFr1fbuBWKo4',
   enquirySpreadsheetId: '19Wm3dqs5d6f4AFiEGk7A_g_DGsQ2FrYQ_LWvafFnMbU',
-  enquirySheetName: 'Form_Responses',
+  enquirySheetNames: ['Form Response 1', 'Form Responses 1', 'Form_Responses'],
   sharedSecret: ''
 };
 
@@ -243,7 +243,7 @@ function list_(entity) {
 
 function listWebsiteEnquiries_() {
   const spreadsheet = SpreadsheetApp.openById(CONFIG.enquirySpreadsheetId);
-  const sheet = spreadsheet.getSheetByName(CONFIG.enquirySheetName) || spreadsheet.getSheets()[0];
+  const sheet = getFirstMatchingSheet_(spreadsheet, CONFIG.enquirySheetNames);
   const lastRow = sheet.getLastRow();
   const lastColumn = sheet.getLastColumn();
   if (lastRow < 2 || lastColumn < 1) return [];
@@ -299,6 +299,14 @@ function listWebsiteEnquiries_() {
       updatedAt: now_()
     };
   }).filter((record) => record.name || record.email || record.phone);
+}
+
+function getFirstMatchingSheet_(spreadsheet, sheetNames) {
+  for (let index = 0; index < sheetNames.length; index += 1) {
+    const sheet = spreadsheet.getSheetByName(sheetNames[index]);
+    if (sheet) return sheet;
+  }
+  return spreadsheet.getSheets()[0];
 }
 
 function append_(entity, record) {
