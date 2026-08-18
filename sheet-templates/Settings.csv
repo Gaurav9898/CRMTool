@@ -1,0 +1,5 @@
+key,value,notes
+enquirySpreadsheetId,19Wm3dqs5d6f4AFiEGk7A_g_DGsQ2FrYQ_LWvafFnMbU,Existing website enquiry sheet
+enquiryGid,1770350818,Existing enquiry tab gid
+crmOwner,Seema,Single-user mode
+reminderProviders,"Gmail,Google Calendar",Browser links first; API automation later

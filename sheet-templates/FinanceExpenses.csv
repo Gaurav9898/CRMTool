@@ -1,0 +1,2 @@
+expenseId,category,description,amount,taxRate,status,date,createdAt,updatedAt,paymentMode,notes
+EXP-401,Marketing,Instagram consultation campaign,8500,18,Paid,2026-08-18,2026-08-18T10:45:00+05:30,2026-08-18T10:45:00+05:30,UPI,August campaign

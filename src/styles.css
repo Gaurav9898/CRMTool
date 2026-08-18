@@ -177,10 +177,6 @@ button {
   display: none;
 }
 
-.sidebar-close {
-  display: none;
-}
-
 .screen-grid {
   display: grid;
   gap: 18px;
@@ -561,6 +557,25 @@ button {
   font-size: 12px;
 }
 
+.inline-money-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 150px;
+  color: var(--stone);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.inline-money-field input {
+  width: 96px;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 8px;
+  font-weight: 800;
+}
+
 .lead-card h2 {
   margin: 0;
   font-size: 19px;
@@ -779,6 +794,42 @@ button {
   text-transform: uppercase;
 }
 
+.inline-edit-field,
+.inline-select-field {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--stone);
+  font-weight: 800;
+}
+
+.inline-edit-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+}
+
+.inline-edit-field input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-weight: 800;
+}
+
+.inline-edit-field span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inline-select-field {
+  padding: 0 9px;
+}
+
 .client-progress {
   padding: 12px;
   border-radius: 8px;
@@ -886,16 +937,11 @@ button {
   z-index: 50;
 }
 
-.modal-scrim,
-.nav-scrim {
+.modal-scrim {
   position: fixed;
   inset: 0;
   border: 0;
   background: rgba(20, 17, 15, 0.64);
-}
-
-.nav-scrim {
-  z-index: 20;
 }
 
 .modal-card {
@@ -1000,22 +1046,20 @@ button {
 
   .mobile-menu {
     display: inline-flex;
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 45;
   }
 
   .mobile-menu.active {
     background: var(--stone);
     color: white;
-  }
-
-  .sidebar-close {
-    display: inline-flex;
-    background: rgba(255, 255, 255, 0.1);
-    color: white;
-    border-color: rgba(255, 255, 255, 0.16);
+    left: min(296px, calc(100vw - 56px));
   }
 
   .workspace {
-    padding: 16px;
+    padding: 76px 16px 16px;
   }
 
   .topbar {

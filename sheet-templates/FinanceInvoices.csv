@@ -1,0 +1,2 @@
+invoiceId,leadId,clientName,program,amount,paid,taxRate,status,dueDate,createdAt,updatedAt,paymentMode,notes
+INV-301,SH-1001,Aarohi Mehta,Online Coaching,18000,0,18,Pending,2026-08-22,2026-08-18T10:40:00+05:30,2026-08-18T10:40:00+05:30,UPI,Awaiting package confirmation

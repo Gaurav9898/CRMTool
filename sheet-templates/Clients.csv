@@ -1,0 +1,2 @@
+clientId,leadId,fullName,program,startDate,endDate,status,packageAmount,paidAmount,nextReview,coach,notes,createdAt,updatedAt
+CL-601,SH-1001,Aarohi Mehta,Online Coaching,2026-08-22,,Active,18000,0,2026-09-22,Seema,Created from converted lead,2026-08-18T10:55:00+05:30,2026-08-18T10:55:00+05:30

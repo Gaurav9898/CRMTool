@@ -1,0 +1,2 @@
+historyId,leadId,previousStage,newStage,changedBy,changedAt,note,nextFollowUp
+LSH-1001,SH-1001,OPEN_LEAD,FOLLOW_UP,Seema,2026-08-18T10:30:00+05:30,Consultation follow-up required,2026-08-19

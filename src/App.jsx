@@ -380,11 +380,33 @@ function App() {
   });
 
   const updateLead = (id, field, value) => {
-    setLeads((current) => current.map((lead) => (lead.id === id ? { ...lead, [field]: value } : lead)));
+    setLeads((current) => current.map((lead) => (lead.id === id ? { ...lead, [field]: field === 'value' ? clampMoney(value) : value } : lead)));
   };
 
   const updateTask = (id, status) => {
     setTasks((current) => current.map((task) => (task.id === id ? { ...task, status } : task)));
+  };
+
+  const updatePayment = (id, field, value) => {
+    setPayments((current) => current.map((payment) => {
+      if (payment.id !== id) return payment;
+      const next = {
+        ...payment,
+        [field]: ['amount', 'paid', 'taxRate'].includes(field) ? clampMoney(value) : value
+      };
+      if (field === 'amount' && next.paid > next.amount) {
+        next.paid = next.amount;
+      }
+      return next;
+    }));
+  };
+
+  const updateExpense = (id, field, value) => {
+    setExpenses((current) => current.map((expense) => (
+      expense.id === id
+        ? { ...expense, [field]: ['amount', 'taxRate'].includes(field) ? clampMoney(value) : value }
+        : expense
+    )));
   };
 
   const addLead = (event) => {
@@ -510,9 +532,6 @@ function App() {
               <span>CRM Studio</span>
             </div>
           </div>
-          <button className="icon-button sidebar-close" type="button" onClick={() => setMobileNavOpen(false)} aria-label="Close menu">
-            <X size={18} />
-          </button>
         </div>
         <nav className="nav-list" aria-label="CRM sections">
           {navItems.map((item) => {
@@ -598,6 +617,8 @@ function App() {
             expenses={expenses}
             metrics={metrics}
             monthRevenue={monthRevenue}
+            updatePayment={updatePayment}
+            updateExpense={updateExpense}
             onAddInvoice={() => setShowPaymentForm(true)}
             onAddExpense={() => setShowExpenseForm(true)}
           />
@@ -614,7 +635,6 @@ function App() {
         {active === 'settings' && <SettingsView />}
       </main>
 
-      {mobileNavOpen && <button className="nav-scrim" type="button" aria-label="Close menu" onClick={() => setMobileNavOpen(false)} />}
       {showLeadForm && <LeadModal onClose={() => setShowLeadForm(false)} onSubmit={addLead} />}
       {showTaskForm && <TaskModal onClose={() => setShowTaskForm(false)} onSubmit={addTask} leads={leads} />}
       {showPaymentForm && <PaymentModal onClose={() => setShowPaymentForm(false)} onSubmit={addPayment} leads={leads} />}
@@ -803,7 +823,17 @@ function LeadsView({ query, setQuery, stageFilter, setStageFilter, priorityFilte
               </select>
             </div>
             <div className="lead-footer">
-              <span>{formatMoney(lead.value)}</span>
+              <label className="inline-money-field">
+                <span>Amount</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={lead.value}
+                  onChange={(event) => updateLead(lead.id, 'value', event.target.value)}
+                  aria-label={`Expected package amount for ${lead.name}`}
+                />
+              </label>
               <span>Follow-up {lead.nextFollowUp}</span>
             </div>
           </article>
@@ -854,7 +884,7 @@ function TasksView({ tasks, leads, updateTask, onAdd }) {
   );
 }
 
-function FinanceView({ payments, expenses, metrics, monthRevenue, onAddInvoice, onAddExpense }) {
+function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment, updateExpense, onAddInvoice, onAddExpense }) {
   const maxRevenue = Math.max(...monthRevenue.map((item) => item.value));
 
   return (
@@ -908,9 +938,14 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, onAddInvoice, 
             <span>{item.id}</span>
             <strong>{item.client}</strong>
             <span>{item.program}</span>
-            <span>{formatMoney(item.amount)}</span>
-            <span>{formatMoney(item.paid)}</span>
-            <StatusPill value={item.status} />
+            <InlineMoneyInput value={item.amount} onChange={(value) => updatePayment(item.id, 'amount', value)} ariaLabel={`Invoice amount for ${item.client}`} />
+            <InlineMoneyInput value={item.paid} onChange={(value) => updatePayment(item.id, 'paid', value)} ariaLabel={`Paid amount for ${item.client}`} />
+            <InlineSelect
+              value={item.status}
+              options={['Draft', 'Pending', 'Part Paid', 'Paid', 'Cancelled']}
+              onChange={(value) => updatePayment(item.id, 'status', value)}
+              ariaLabel={`Invoice status for ${item.client}`}
+            />
           </div>
         ))}
       </section>
@@ -929,9 +964,14 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, onAddInvoice, 
             <span>{item.id}</span>
             <strong>{item.category}</strong>
             <span>{item.description}</span>
-            <span>{formatMoney(item.amount)}</span>
-            <span>{item.taxRate}%</span>
-            <StatusPill value={item.status} />
+            <InlineMoneyInput value={item.amount} onChange={(value) => updateExpense(item.id, 'amount', value)} ariaLabel={`Expense amount for ${item.description}`} />
+            <InlinePercentInput value={item.taxRate} onChange={(value) => updateExpense(item.id, 'taxRate', value)} ariaLabel={`Expense tax rate for ${item.description}`} />
+            <InlineSelect
+              value={item.status}
+              options={['Planned', 'Pending', 'Paid', 'Cancelled']}
+              onChange={(value) => updateExpense(item.id, 'status', value)}
+              ariaLabel={`Expense status for ${item.description}`}
+            />
           </div>
         ))}
       </section>
@@ -1247,6 +1287,32 @@ function StatusPill({ value }) {
 
 function PriorityPill({ value }) {
   return <span className={`priority-pill ${classNameFor(value)}`}>{value}</span>;
+}
+
+function InlineMoneyInput({ value, onChange, ariaLabel }) {
+  return (
+    <label className="inline-edit-field money">
+      <span>Rs</span>
+      <input type="number" min="0" step="1" value={value} onChange={(event) => onChange(event.target.value)} aria-label={ariaLabel} />
+    </label>
+  );
+}
+
+function InlinePercentInput({ value, onChange, ariaLabel }) {
+  return (
+    <label className="inline-edit-field percent">
+      <input type="number" min="0" step="0.1" value={value} onChange={(event) => onChange(event.target.value)} aria-label={ariaLabel} />
+      <span>%</span>
+    </label>
+  );
+}
+
+function InlineSelect({ value, options, onChange, ariaLabel }) {
+  return (
+    <select className="inline-select-field" value={value} onChange={(event) => onChange(event.target.value)} aria-label={ariaLabel}>
+      {options.map((option) => <option key={option}>{option}</option>)}
+    </select>
+  );
 }
 
 function ModalShell({ title, children, onClose }) {
