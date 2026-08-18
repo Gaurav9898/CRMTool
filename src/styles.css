@@ -870,8 +870,8 @@ button {
 }
 
 .expense-row {
-  grid-template-columns: 110px 160px minmax(220px, 1fr) 120px 80px 110px;
-  min-width: 860px;
+  grid-template-columns: 110px 150px minmax(210px, 1fr) 120px 80px 110px 100px;
+  min-width: 980px;
 }
 
 .reminder-row {
@@ -952,6 +952,10 @@ button {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.error-cell {
+  color: #be123c;
 }
 
 .client-progress {

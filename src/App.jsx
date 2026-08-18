@@ -259,6 +259,31 @@ function clampMoney(value) {
   return Math.max(0, Number(value || 0));
 }
 
+function readAttachmentFile(file) {
+  if (!file || typeof file === 'string' || !file.name || file.size === 0) {
+    return Promise.resolve(null);
+  }
+
+  const maxSize = 8 * 1024 * 1024;
+  if (file.size > maxSize) {
+    return Promise.reject(new Error('Attachment must be 8 MB or smaller.'));
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      resolve({
+        name: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        base64: result.includes(',') ? result.split(',').pop() : result
+      });
+    };
+    reader.onerror = () => reject(new Error('Could not read the selected attachment.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 function cleanPhone(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
   if (digits.length === 10) return `91${digits}`;
@@ -845,19 +870,22 @@ function App() {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    const newExpense = {
-      id: nextId('EXP', expenses),
-      category: form.get('category'),
-      description: form.get('description'),
-      amount: clampMoney(form.get('amount')),
-      date: form.get('date'),
-      taxRate: clampMoney(form.get('taxRate') || 18),
-      status: form.get('status'),
-      createdAt: isoNow(),
-      updatedAt: isoNow()
-    };
-
     try {
+      const attachment = await readAttachmentFile(form.get('receiptFile'));
+      const newExpense = {
+        id: nextId('EXP', expenses),
+        category: form.get('category'),
+        description: form.get('description'),
+        amount: clampMoney(form.get('amount')),
+        date: form.get('date'),
+        taxRate: clampMoney(form.get('taxRate') || 18),
+        status: form.get('status'),
+        paymentMode: form.get('paymentMode'),
+        notes: form.get('notes'),
+        attachment,
+        createdAt: isoNow(),
+        updatedAt: isoNow()
+      };
       const saved = await createRecord(crmEntities.expenses, newExpense);
       setExpenses((current) => [saved, ...current]);
       setShowExpenseForm(false);
@@ -1347,6 +1375,8 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment,
             />
             {item.pdfUrl ? (
               <a className="inline-link" href={item.pdfUrl} target="_blank" rel="noreferrer">Open</a>
+            ) : item.pdfError ? (
+              <span className="muted-cell error-cell" title={item.pdfError}>PDF error</span>
             ) : (
               <span className="muted-cell">Not created</span>
             )}
@@ -1362,6 +1392,7 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment,
           <span>Amount</span>
           <span>Tax</span>
           <span>Status</span>
+          <span>Attachment</span>
         </div>
         {expenses.length === 0 && <EmptyTableRow message="No expenses loaded from FinanceExpenses." type="expense" />}
         {expenses.map((item) => (
@@ -1377,6 +1408,13 @@ function FinanceView({ payments, expenses, metrics, monthRevenue, updatePayment,
               onChange={(value) => updateExpense(item.id, 'status', value)}
               ariaLabel={`Expense status for ${item.description}`}
             />
+            {item.attachmentUrl ? (
+              <a className="inline-link" href={item.attachmentUrl} target="_blank" rel="noreferrer">Open</a>
+            ) : item.attachmentError ? (
+              <span className="muted-cell error-cell" title={item.attachmentError}>Upload error</span>
+            ) : (
+              <span className="muted-cell">None</span>
+            )}
           </div>
         ))}
       </section>
@@ -1909,6 +1947,12 @@ function ExpenseModal({ onClose, onSubmit }) {
         <Input name="taxRate" label="Tax Rate %" type="number" min="0" step="0.1" />
         <Input name="date" label="Date" type="date" required />
         <Select name="status" label="Status" options={['Paid', 'Pending', 'Planned']} />
+        <Input name="paymentMode" label="Payment Mode" defaultValue="UPI / Bank Transfer" />
+        <Input name="receiptFile" label="Upload Invoice / Receipt" type="file" accept="application/pdf,image/*" />
+        <label className="field full-field">
+          <span>Notes</span>
+          <textarea name="notes" rows="2" />
+        </label>
         <div className="modal-actions">
           <button className="ghost-button" type="button" onClick={onClose}>Cancel</button>
           <button className="primary-button" type="submit">

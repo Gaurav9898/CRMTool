@@ -3,6 +3,7 @@ const CONFIG = {
   enquirySpreadsheetId: '19Wm3dqs5d6f4AFiEGk7A_g_DGsQ2FrYQ_LWvafFnMbU',
   enquirySheetNames: ['Form Response 1', 'Form Responses 1', 'Form_Responses'],
   invoiceFolderId: '17rULGT6_AlXiy8u2zTvctmcBUODiskoY',
+  expenseFolderId: '1eCWxjdT2j4bJc_hiK8r4nfk3pjM8MZPh',
   logoUrl: 'https://strongher-crm-tool.pages.dev/strongher-logo.png',
   businessName: 'StrongHer By Seema',
   businessEmail: 'strongherseema@gmail.com',
@@ -106,7 +107,7 @@ const ENTITY_CONFIG = {
   financeInvoices: {
     sheetName: 'FinanceInvoices',
     idColumn: 'invoiceId',
-    headers: ['invoiceId', 'leadId', 'clientName', 'clientPhone', 'clientEmail', 'billingAddress', 'program', 'description', 'amount', 'discountLabel', 'discountAmount', 'subtotal', 'taxRate', 'taxAmount', 'total', 'paid', 'status', 'invoiceDate', 'paymentDate', 'dueDate', 'validFrom', 'validUntil', 'createdAt', 'updatedAt', 'paymentMode', 'notes', 'pdfFileId', 'pdfUrl'],
+    headers: ['invoiceId', 'leadId', 'clientName', 'clientPhone', 'clientEmail', 'billingAddress', 'program', 'description', 'amount', 'discountLabel', 'discountAmount', 'subtotal', 'taxRate', 'taxAmount', 'total', 'paid', 'status', 'invoiceDate', 'paymentDate', 'dueDate', 'validFrom', 'validUntil', 'createdAt', 'updatedAt', 'paymentMode', 'notes', 'pdfFileId', 'pdfUrl', 'pdfError'],
     toSheet(record) {
       const amount = Number(record.amount || 0);
       const discountAmount = Math.min(Number(record.discountAmount || 0), amount);
@@ -143,7 +144,8 @@ const ENTITY_CONFIG = {
         paymentMode: record.paymentMode || '',
         notes: record.notes || '',
         pdfFileId: record.pdfFileId || '',
-        pdfUrl: record.pdfUrl || ''
+        pdfUrl: record.pdfUrl || '',
+        pdfError: record.pdfError || ''
       };
     },
     fromSheet(row) {
@@ -181,14 +183,15 @@ const ENTITY_CONFIG = {
         paymentMode: row.paymentMode,
         notes: row.notes,
         pdfFileId: row.pdfFileId,
-        pdfUrl: row.pdfUrl
+        pdfUrl: row.pdfUrl,
+        pdfError: row.pdfError
       };
     }
   },
   financeExpenses: {
     sheetName: 'FinanceExpenses',
     idColumn: 'expenseId',
-    headers: ['expenseId', 'category', 'description', 'amount', 'taxRate', 'status', 'date', 'createdAt', 'updatedAt', 'paymentMode', 'notes'],
+    headers: ['expenseId', 'category', 'description', 'amount', 'taxRate', 'status', 'date', 'createdAt', 'updatedAt', 'paymentMode', 'notes', 'attachmentFileName', 'attachmentMimeType', 'attachmentFileId', 'attachmentUrl', 'attachmentError'],
     toSheet(record) {
       return {
         expenseId: record.id,
@@ -201,7 +204,12 @@ const ENTITY_CONFIG = {
         createdAt: record.createdAt || now_(),
         updatedAt: record.updatedAt || now_(),
         paymentMode: record.paymentMode || '',
-        notes: record.notes || ''
+        notes: record.notes || '',
+        attachmentFileName: record.attachmentFileName || '',
+        attachmentMimeType: record.attachmentMimeType || '',
+        attachmentFileId: record.attachmentFileId || '',
+        attachmentUrl: record.attachmentUrl || '',
+        attachmentError: record.attachmentError || ''
       };
     },
     fromSheet(row) {
@@ -214,7 +222,14 @@ const ENTITY_CONFIG = {
         status: row.status || 'Pending',
         date: row.date,
         createdAt: row.createdAt,
-        updatedAt: row.updatedAt
+        updatedAt: row.updatedAt,
+        paymentMode: row.paymentMode,
+        notes: row.notes,
+        attachmentFileName: row.attachmentFileName,
+        attachmentMimeType: row.attachmentMimeType,
+        attachmentFileId: row.attachmentFileId,
+        attachmentUrl: row.attachmentUrl,
+        attachmentError: row.attachmentError
       };
     }
   }
@@ -392,6 +407,9 @@ function append_(entity, record) {
   if (entity === 'financeInvoices') {
     nextRecord = attachInvoicePdf_(nextRecord);
   }
+  if (entity === 'financeExpenses') {
+    nextRecord = attachExpenseFile_(nextRecord);
+  }
   const row = config.toSheet(nextRecord);
   const sheetHeaders = getSheetHeaders_(sheet);
   sheet.appendRow(sheetHeaders.map((header) => row[header] ?? ''));
@@ -416,6 +434,9 @@ function upsert_(entity, record) {
   if (entity === 'financeInvoices') {
     nextRecord = attachInvoicePdf_(nextRecord);
   }
+  if (entity === 'financeExpenses') {
+    nextRecord = attachExpenseFile_(nextRecord);
+  }
   const row = config.toSheet(nextRecord);
   sheet.getRange(rowNumber, 1, 1, sheetHeaders.length).setValues([sheetHeaders.map((header) => row[header] ?? '')]);
 
@@ -427,17 +448,55 @@ function upsert_(entity, record) {
 }
 
 function attachInvoicePdf_(record) {
-  const row = ENTITY_CONFIG.financeInvoices.toSheet(record);
-  const normalized = ENTITY_CONFIG.financeInvoices.fromSheet(row);
-  const pdf = createInvoicePdf_(normalized);
-  return {
-    ...record,
-    subtotal: normalized.subtotal,
-    taxAmount: normalized.taxAmount,
-    total: normalized.total,
-    pdfFileId: pdf.fileId,
-    pdfUrl: pdf.url
-  };
+  try {
+    const row = ENTITY_CONFIG.financeInvoices.toSheet(record);
+    const normalized = ENTITY_CONFIG.financeInvoices.fromSheet(row);
+    const pdf = createInvoicePdf_(normalized);
+    return {
+      ...record,
+      subtotal: normalized.subtotal,
+      taxAmount: normalized.taxAmount,
+      total: normalized.total,
+      pdfFileId: pdf.fileId,
+      pdfUrl: pdf.url,
+      pdfError: ''
+    };
+  } catch (error) {
+    return {
+      ...record,
+      pdfError: error.message || 'Invoice PDF could not be created'
+    };
+  }
+}
+
+function attachExpenseFile_(record) {
+  const attachment = record.attachment;
+  if (!attachment || !attachment.base64) {
+    return record;
+  }
+
+  try {
+    const folder = DriveApp.getFolderById(CONFIG.expenseFolderId);
+    const fileName = sanitizeFileName_(`${record.id || 'Expense'} - ${attachment.name || 'receipt'}`);
+    const bytes = Utilities.base64Decode(attachment.base64);
+    const blob = Utilities.newBlob(bytes, attachment.mimeType || MimeType.PDF, fileName);
+    const file = folder.createFile(blob);
+    return {
+      ...record,
+      attachment: '',
+      attachmentFileName: file.getName(),
+      attachmentMimeType: blob.getContentType(),
+      attachmentFileId: file.getId(),
+      attachmentUrl: file.getUrl(),
+      attachmentError: ''
+    };
+  } catch (error) {
+    return {
+      ...record,
+      attachment: '',
+      attachmentError: error.message || 'Expense attachment could not be uploaded'
+    };
+  }
 }
 
 function createInvoicePdf_(invoice) {
