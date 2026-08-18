@@ -1,5 +1,7 @@
 const CONFIG = {
   spreadsheetId: '1jyrihEYdXq4Mz_Exerbl1GlA8wmdH3jQFr1fbuBWKo4',
+  enquirySpreadsheetId: '19Wm3dqs5d6f4AFiEGk7A_g_DGsQ2FrYQ_LWvafFnMbU',
+  enquirySheetName: 'Form_Responses',
   sharedSecret: ''
 };
 
@@ -229,10 +231,74 @@ function setupSheets_() {
 }
 
 function list_(entity) {
+  if (entity === 'websiteEnquiries') {
+    return listWebsiteEnquiries_();
+  }
+
   const config = getConfig_(entity);
   const sheet = SpreadsheetApp.openById(CONFIG.spreadsheetId).getSheetByName(config.sheetName);
   const rows = readRows_(sheet, config.headers);
   return rows.map((row) => config.fromSheet(row)).filter((record) => record.id);
+}
+
+function listWebsiteEnquiries_() {
+  const spreadsheet = SpreadsheetApp.openById(CONFIG.enquirySpreadsheetId);
+  const sheet = spreadsheet.getSheetByName(CONFIG.enquirySheetName) || spreadsheet.getSheets()[0];
+  const lastRow = sheet.getLastRow();
+  const lastColumn = sheet.getLastColumn();
+  if (lastRow < 2 || lastColumn < 1) return [];
+
+  const values = sheet.getRange(1, 1, lastRow, lastColumn).getValues();
+  const headers = values[0].map((header) => normalizeHeader_(header));
+  const rows = values.slice(1);
+
+  return rows.map((row, index) => {
+    const rowNumber = index + 2;
+    const rowData = headers.reduce((acc, header, columnIndex) => {
+      acc[header] = row[columnIndex];
+      return acc;
+    }, {});
+    const submittedAt = pick_(rowData, ['receivedat', 'timestamp', 'submittedat']);
+    const email = pick_(rowData, ['emailaddress', 'email']);
+    const fullName = pick_(rowData, ['fullname', 'name']);
+    const age = pick_(rowData, ['age']);
+    const city = pick_(rowData, ['city']);
+    const phone = pick_(rowData, ['whatsappnumber', 'phone', 'mobilenumber']);
+    const heardAbout = pick_(rowData, ['howdidyouhearaboutstrongher', 'heardabout', 'source']);
+    const primaryGoals = pick_(rowData, ['primarygoals', 'goal', 'goals']);
+    const trainingExperience = pick_(rowData, ['trainingexperience', 'fitnessexperience', 'experience']);
+    const lookingFor = pick_(rowData, ['lookingfor', 'program', 'service']);
+    const healthNotes = pick_(rowData, ['healthnotes', 'medicalhistory', 'injuries', 'issues']);
+    const consultationDate = pick_(rowData, ['consultationdate', 'preferreddate']);
+    const consultationTime = pick_(rowData, ['consultationtime', 'preferredtime']);
+
+    return {
+      id: `ENQ-${rowNumber}`,
+      enquiryRowId: String(rowNumber),
+      submittedAt: formatValue_(submittedAt),
+      name: formatValue_(fullName) || 'Website enquiry',
+      age: Number(age || 0),
+      city: formatValue_(city),
+      phone: formatValue_(phone),
+      email: formatValue_(email),
+      source: formatValue_(heardAbout) || 'Website Enquiry',
+      goal: formatValue_(primaryGoals),
+      program: formatValue_(lookingFor) || 'Consultation',
+      stage: 'OPEN_LEAD',
+      priority: 'Warm',
+      owner: 'Team',
+      value: 0,
+      paid: 0,
+      nextFollowUp: normalizeDateValue_(consultationDate) || normalizeDateValue_(submittedAt) || '',
+      healthNotes: formatValue_(healthNotes) || formatValue_(trainingExperience),
+      lastActivity: 'Imported from website enquiry sheet.',
+      sourceKind: 'Website Enquiry',
+      consultationDate: normalizeDateValue_(consultationDate),
+      consultationTime: formatValue_(consultationTime),
+      createdAt: formatValue_(submittedAt),
+      updatedAt: now_()
+    };
+  }).filter((record) => record.name || record.email || record.phone);
 }
 
 function append_(entity, record) {
@@ -312,6 +378,42 @@ function findRowNumber_(sheet, headers, idColumn, id) {
 
 function now_() {
   return new Date().toISOString();
+}
+
+function normalizeHeader_(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function pick_(rowData, keys) {
+  for (let index = 0; index < keys.length; index += 1) {
+    const value = rowData[keys[index]];
+    if (value !== '' && value !== null && typeof value !== 'undefined') {
+      return value;
+    }
+  }
+  return '';
+}
+
+function normalizeDateValue_(value) {
+  if (!value) return '';
+  if (Object.prototype.toString.call(value) === '[object Date]' && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const text = String(value);
+  const isoMatch = text.match(/\d{4}-\d{2}-\d{2}/);
+  if (isoMatch) return isoMatch[0];
+  const slashMatch = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (slashMatch) {
+    return `${slashMatch[3]}-${slashMatch[1].padStart(2, '0')}-${slashMatch[2].padStart(2, '0')}`;
+  }
+  return '';
+}
+
+function formatValue_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+  return String(value || '').trim();
 }
 
 function json_(data) {

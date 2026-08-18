@@ -1,4 +1,4 @@
-const allowedEntities = new Set(['leads', 'tasks', 'financeInvoices', 'financeExpenses']);
+const allowedEntities = new Set(['leads', 'tasks', 'financeInvoices', 'financeExpenses', 'websiteEnquiries']);
 const allowedActions = new Set(['list', 'create', 'upsert']);
 
 function json(data, status = 200) {

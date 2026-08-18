@@ -223,7 +223,8 @@ const crmEntities = {
   leads: 'leads',
   tasks: 'tasks',
   payments: 'financeInvoices',
-  expenses: 'financeExpenses'
+  expenses: 'financeExpenses',
+  websiteEnquiries: 'websiteEnquiries'
 };
 
 function formatMoney(value) {
@@ -279,8 +280,9 @@ function gmailUrl({ to, subject, body }) {
 }
 
 function calendarUrl({ title, date, details }) {
-  const start = String(date || today).replace(/-/g, '');
-  const nextDate = new Date(`${date || today}T00:00:00`);
+  const dateOnly = normalizeDateOnly(date);
+  const start = dateOnly.replace(/-/g, '');
+  const nextDate = new Date(`${dateOnly}T00:00:00`);
   nextDate.setDate(nextDate.getDate() + 1);
   const end = nextDate.toISOString().slice(0, 10).replace(/-/g, '');
   const params = new URLSearchParams({
@@ -290,6 +292,47 @@ function calendarUrl({ title, date, details }) {
     details: details || ''
   });
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+function normalizeDateOnly(value, fallback = today) {
+  if (!value) return fallback;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  const text = String(value);
+  const isoMatch = text.match(/\d{4}-\d{2}-\d{2}/);
+  if (isoMatch) return isoMatch[0];
+
+  const slashMatch = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (slashMatch) {
+    const [, month, day, year] = slashMatch;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  return fallback;
+}
+
+function displayDate(value) {
+  return normalizeDateOnly(value, '');
+}
+
+function isSameDate(value, expectedDate) {
+  return normalizeDateOnly(value, '') === expectedDate;
+}
+
+function mergeLeadsWithEnquiries(sheetLeads, websiteEnquiries) {
+  const seen = new Set();
+  const merged = [];
+
+  [...sheetLeads, ...websiteEnquiries].forEach((lead) => {
+    const identity = lead.enquiryRowId || lead.id || `${lead.email}-${lead.phone}`;
+    if (seen.has(identity)) return;
+    seen.add(identity);
+    merged.push(lead);
+  });
+
+  return merged;
 }
 
 function leadOptionLabel(lead) {
@@ -340,15 +383,16 @@ function App() {
           throw new Error(health.error || 'Google Sheets API is not configured');
         }
 
-        const [sheetLeads, sheetTasks, sheetPayments, sheetExpenses] = await Promise.all([
+        const [sheetLeads, sheetTasks, sheetPayments, sheetExpenses, websiteEnquiries] = await Promise.all([
           crmRequest('list', crmEntities.leads),
           crmRequest('list', crmEntities.tasks),
           crmRequest('list', crmEntities.payments),
-          crmRequest('list', crmEntities.expenses)
+          crmRequest('list', crmEntities.expenses),
+          crmRequest('list', crmEntities.websiteEnquiries)
         ]);
 
         if (cancelled) return;
-        setLeads(sheetLeads.records || []);
+        setLeads(mergeLeadsWithEnquiries(sheetLeads.records || [], websiteEnquiries.records || []));
         setTasks(sheetTasks.records || []);
         setPayments(sheetPayments.records || []);
         setExpenses(sheetExpenses.records || []);
@@ -405,7 +449,7 @@ function App() {
     const converted = leads.filter((lead) => ['LEAD_CONVERTED', 'PAYMENT_RECEIVED'].includes(lead.stage)).length;
     const hot = leads.filter((lead) => lead.priority === 'Hot').length;
     const overdueTasks = tasks.filter((task) => task.status === 'Overdue').length;
-    const dueToday = tasks.filter((task) => task.due === today && task.status !== 'Completed').length;
+    const dueToday = tasks.filter((task) => isSameDate(task.due, today) && task.status !== 'Completed').length;
 
     return {
       totalLeads: leads.length,
@@ -525,7 +569,8 @@ function App() {
 
   const addLead = async (event) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const newLead = {
       id: nextId('SH', leads),
       name: form.get('name'),
@@ -552,7 +597,7 @@ function App() {
       const saved = await createRecord(crmEntities.leads, newLead);
       setLeads((current) => [saved, ...current]);
       setShowLeadForm(false);
-      event.currentTarget.reset();
+      formElement.reset();
     } catch (error) {
       handleSyncError(error);
     }
@@ -560,7 +605,8 @@ function App() {
 
   const addTask = async (event) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const newTask = {
       id: nextId('T', tasks),
       title: form.get('title'),
@@ -577,7 +623,7 @@ function App() {
       const saved = await createRecord(crmEntities.tasks, newTask);
       setTasks((current) => [saved, ...current]);
       setShowTaskForm(false);
-      event.currentTarget.reset();
+      formElement.reset();
     } catch (error) {
       handleSyncError(error);
     }
@@ -585,7 +631,8 @@ function App() {
 
   const addPayment = async (event) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const amount = clampMoney(form.get('amount'));
     const paid = Math.min(clampMoney(form.get('paid')), amount);
     const newPayment = {
@@ -606,7 +653,7 @@ function App() {
       const saved = await createRecord(crmEntities.payments, newPayment);
       setPayments((current) => [saved, ...current]);
       setShowPaymentForm(false);
-      event.currentTarget.reset();
+      formElement.reset();
     } catch (error) {
       handleSyncError(error);
     }
@@ -614,7 +661,8 @@ function App() {
 
   const addExpense = async (event) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const newExpense = {
       id: nextId('EXP', expenses),
       category: form.get('category'),
@@ -631,7 +679,7 @@ function App() {
       const saved = await createRecord(crmEntities.expenses, newExpense);
       setExpenses((current) => [saved, ...current]);
       setShowExpenseForm(false);
-      event.currentTarget.reset();
+      formElement.reset();
     } catch (error) {
       handleSyncError(error);
     }
@@ -886,7 +934,7 @@ function Dashboard({ metrics, stageCounts, programMix, monthRevenue, leads, task
             <ClipboardList size={18} />
           </div>
           <div className="stack-list">
-            {tasks.filter((task) => task.due === today || task.status === 'Overdue').slice(0, 4).map((task) => (
+            {tasks.filter((task) => isSameDate(task.due, today) || task.status === 'Overdue').slice(0, 4).map((task) => (
               <article className="mini-row" key={task.id}>
                 <div>
                   <strong>{task.title}</strong>
@@ -962,6 +1010,7 @@ function LeadsView({ query, setQuery, stageFilter, setStageFilter, priorityFilte
               <span>{lead.city}</span>
               <span>{lead.phone}</span>
               <span>{lead.source}</span>
+              {lead.sourceKind && <span>{lead.sourceKind}</span>}
             </div>
             <div className="lead-note">{lead.healthNotes}</div>
             <div className="lead-controls">
@@ -984,7 +1033,7 @@ function LeadsView({ query, setQuery, stageFilter, setStageFilter, priorityFilte
                   aria-label={`Expected package amount for ${lead.name}`}
                 />
               </label>
-              <span>Follow-up {lead.nextFollowUp}</span>
+              <span>Follow-up {displayDate(lead.nextFollowUp) || '-'}</span>
             </div>
           </article>
         ))}
@@ -1020,7 +1069,7 @@ function TasksView({ tasks, leads, updateTask, onAdd }) {
                 </div>
                 <div className="task-meta">
                   <span>{task.owner}</span>
-                  <span>{task.due}</span>
+                  <span>{displayDate(task.due) || '-'}</span>
                 </div>
                 <select value={task.status} onChange={(event) => updateTask(task.id, event.target.value)}>
                   {columns.map((status) => <option key={status}>{status}</option>)}
@@ -1135,19 +1184,21 @@ function RemindersView({ leads, tasks }) {
     .map((task) => {
       const lead = leads.find((item) => item.id === task.leadId);
       const subject = lead ? `StrongHer follow-up: ${task.title}` : `StrongHer task: ${task.title}`;
+      const dueDate = displayDate(task.due) || today;
       const body = lead
-        ? `Hi ${lead.name},\n\nThis is Seema from StrongHer. I wanted to follow up about ${lead.program} and your goal: ${lead.goal}.\n\nTask: ${task.title}\nDue: ${task.due}\n\nRegards,\nSeema`
-        : `Task: ${task.title}\nDue: ${task.due}`;
+        ? `Hi ${lead.name},\n\nThis is Seema from StrongHer. I wanted to follow up about ${lead.program} and your goal: ${lead.goal}.\n\nTask: ${task.title}\nDue: ${dueDate}\n\nRegards,\nSeema`
+        : `Task: ${task.title}\nDue: ${dueDate}`;
       return {
         ...task,
         lead,
+        dueDate,
         leadName: lead?.name || 'General',
         phone: lead?.phone || '-',
         email: lead?.email || '-',
         gmailHref: gmailUrl({ to: lead?.email, subject, body }),
         calendarHref: calendarUrl({
           title: task.title,
-          date: task.due,
+          date: dueDate,
           details: `${lead ? `${lead.name} / ${lead.phone} / ${lead.email}\n` : ''}${task.type} reminder from StrongHer CRM.`
         })
       };
@@ -1174,7 +1225,7 @@ function RemindersView({ leads, tasks }) {
           <div className="reminder-row" key={item.id}>
             <strong>{item.title}</strong>
             <span>{item.leadName}</span>
-            <span>{item.due}</span>
+            <span>{item.dueDate}</span>
             <a className="ghost-button compact" href={item.gmailHref} target="_blank" rel="noreferrer">
               <Mail size={15} />
               Send
@@ -1227,7 +1278,7 @@ function ClientsView({ leads }) {
               </div>
               <div>
                 <span>Next Review</span>
-                <strong>{client.nextFollowUp}</strong>
+                <strong>{displayDate(client.nextFollowUp) || '-'}</strong>
               </div>
             </div>
             <a
