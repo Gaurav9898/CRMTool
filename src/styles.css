@@ -49,6 +49,10 @@ button {
     #fafaf9;
 }
 
+.crm-shell.nav-closed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
 .sidebar {
   position: sticky;
   top: 0;
@@ -60,6 +64,15 @@ button {
   flex-direction: column;
   gap: 24px;
   z-index: 30;
+  overflow: hidden;
+  transition: transform 180ms ease, width 180ms ease, padding 180ms ease;
+}
+
+.nav-closed .sidebar {
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  transform: translateX(-100%);
 }
 
 .sidebar-head {
@@ -174,12 +187,43 @@ button {
 }
 
 .mobile-menu {
-  display: none;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.mobile-menu.active {
+  background: var(--stone);
+  color: white;
 }
 
 .screen-grid {
   display: grid;
   gap: 18px;
+}
+
+.sync-notice {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 14px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.sync-notice.saving,
+.sync-notice.checking {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.sync-notice.error {
+  background: #fff1f2;
+  color: #be123c;
 }
 
 .metric-grid {
@@ -1026,7 +1070,9 @@ button {
 }
 
 @media (max-width: 860px) {
-  .crm-shell {
+  .crm-shell,
+  .crm-shell.nav-open,
+  .crm-shell.nav-closed {
     grid-template-columns: 1fr;
   }
 
@@ -1040,12 +1086,11 @@ button {
     transition: transform 180ms ease;
   }
 
-  .sidebar.open {
+  .nav-open .sidebar {
     transform: translateX(0);
   }
 
   .mobile-menu {
-    display: inline-flex;
     position: fixed;
     top: 16px;
     left: 16px;

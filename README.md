@@ -33,7 +33,11 @@ npm run deploy:cloudflare
 
 ## Data Storage
 
-Right now, the CRM stores records in browser `localStorage` so the UI can be reviewed quickly.
+The CRM is now built to use Google Sheets through a Cloudflare Pages API route:
+
+- Browser app → `/api/crm`
+- Cloudflare Pages Function → Google Apps Script
+- Google Apps Script → CRM workbook
 
 For real use, connect the Google Spreadsheet:
 
@@ -54,4 +58,30 @@ Those tabs will become the first real CRM database:
 - `Clients`
 - `Settings`
 
-After you share that spreadsheet link, the app can be connected through Google Apps Script. Later, the same structure can be migrated to PostgreSQL.
+### Google Apps Script setup
+
+1. Open the CRM workbook.
+2. Go to `Extensions > Apps Script`.
+3. Paste the file from `google-apps-script/StrongHerCRM.gs`.
+4. Save, then run `setupSheets_` once and approve Google permissions.
+5. Deploy with `Deploy > New deployment > Web app`.
+6. Set access to `Anyone` and copy the Web app URL.
+
+### Cloudflare Pages variables
+
+In Cloudflare, open `crm-tool > Settings > Environment variables` and add:
+
+```bash
+GOOGLE_SHEETS_WEB_APP_URL=your_apps_script_web_app_url
+CRM_SPREADSHEET_ID=1jyrihEYdXq4Mz_Exerbl1GlA8wmdH3jQFr1fbuBWKo4
+```
+
+Optional shared secret:
+
+```bash
+SHEETS_SHARED_SECRET=choose_a_private_value
+```
+
+If you set `SHEETS_SHARED_SECRET`, also put the same value in `CONFIG.sharedSecret` inside `google-apps-script/StrongHerCRM.gs`, then redeploy the Apps Script.
+
+Later, the same sheet structure can be migrated to PostgreSQL.

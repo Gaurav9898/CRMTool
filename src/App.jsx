@@ -219,6 +219,13 @@ const navItems = [
 
 const today = '2026-08-18';
 
+const crmEntities = {
+  leads: 'leads',
+  tasks: 'tasks',
+  payments: 'financeInvoices',
+  expenses: 'financeExpenses'
+};
+
 function formatMoney(value) {
   return `Rs ${value.toLocaleString('en-IN')}`;
 }
@@ -289,30 +296,31 @@ function leadOptionLabel(lead) {
   return `${lead.name} (${lead.id})`;
 }
 
-function useStoredState(key, initialValue) {
-  const [value, setValue] = useState(() => {
-    try {
-      const stored = window.localStorage.getItem(key);
-      return stored ? JSON.parse(stored) : initialValue;
-    } catch {
-      return initialValue;
-    }
+async function crmRequest(action, entity, payload = {}) {
+  const response = await fetch('/api/crm', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action, entity, ...payload })
   });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.ok === false) {
+    throw new Error(result.error || 'Sheet save failed');
+  }
+  return result;
+}
 
-  useEffect(() => {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  }, [key, value]);
-
-  return [value, setValue];
+function isoNow() {
+  return new Date().toISOString();
 }
 
 function App() {
   const [active, setActive] = useState('dashboard');
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [leads, setLeads] = useStoredState('strongher-crm-leads', seedLeads);
-  const [tasks, setTasks] = useStoredState('strongher-crm-tasks', seedTasks);
-  const [payments, setPayments] = useStoredState('strongher-crm-payments', seedPayments);
-  const [expenses, setExpenses] = useStoredState('strongher-crm-expenses', seedExpenses);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia('(min-width: 861px)').matches);
+  const [leads, setLeads] = useState(seedLeads);
+  const [tasks, setTasks] = useState(seedTasks);
+  const [payments, setPayments] = useState(seedPayments);
+  const [expenses, setExpenses] = useState(seedExpenses);
+  const [syncStatus, setSyncStatus] = useState({ state: 'checking', message: 'Checking Google Sheets' });
   const [query, setQuery] = useState('');
   const [stageFilter, setStageFilter] = useState('All');
   const [priorityFilter, setPriorityFilter] = useState('All');
@@ -320,6 +328,69 @@ function App() {
   const [showTaskForm, setShowTaskForm] = useState(false);
   const [showPaymentForm, setShowPaymentForm] = useState(false);
   const [showExpenseForm, setShowExpenseForm] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSheets() {
+      try {
+        const healthResponse = await fetch('/api/crm');
+        const health = await healthResponse.json();
+        if (!health.configured) {
+          throw new Error(health.error || 'Google Sheets API is not configured');
+        }
+
+        const [sheetLeads, sheetTasks, sheetPayments, sheetExpenses] = await Promise.all([
+          crmRequest('list', crmEntities.leads),
+          crmRequest('list', crmEntities.tasks),
+          crmRequest('list', crmEntities.payments),
+          crmRequest('list', crmEntities.expenses)
+        ]);
+
+        if (cancelled) return;
+        setLeads(sheetLeads.records || []);
+        setTasks(sheetTasks.records || []);
+        setPayments(sheetPayments.records || []);
+        setExpenses(sheetExpenses.records || []);
+        setSyncStatus({ state: 'connected', message: 'Google Sheets connected' });
+      } catch (error) {
+        if (cancelled) return;
+        setSyncStatus({ state: 'setup', message: error.message });
+      }
+    }
+
+    loadSheets();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistRecord = async (entity, record) => {
+    if (syncStatus.state !== 'connected') {
+      throw new Error('Google Sheets is not connected yet');
+    }
+
+    setSyncStatus({ state: 'saving', message: 'Saving to Google Sheets' });
+    const result = await crmRequest('upsert', entity, { record });
+    setSyncStatus({ state: 'connected', message: 'Saved to Google Sheets' });
+    return result.record || record;
+  };
+
+  const createRecord = async (entity, record) => {
+    if (syncStatus.state !== 'connected') {
+      throw new Error('Google Sheets is not connected yet');
+    }
+
+    setSyncStatus({ state: 'saving', message: 'Saving to Google Sheets' });
+    const result = await crmRequest('create', entity, { record });
+    setSyncStatus({ state: 'connected', message: 'Saved to Google Sheets' });
+    return result.record || record;
+  };
+
+  const handleSyncError = (error) => {
+    setSyncStatus({ state: 'error', message: error.message || 'Google Sheets save failed' });
+  };
 
   const metrics = useMemo(() => {
     const totalValue = leads.reduce((sum, lead) => sum + lead.value, 0);
@@ -385,37 +456,74 @@ function App() {
     };
   });
 
-  const updateLead = (id, field, value) => {
-    setLeads((current) => current.map((lead) => (lead.id === id ? { ...lead, [field]: field === 'value' ? clampMoney(value) : value } : lead)));
+  const updateLead = async (id, field, value) => {
+    const currentLead = leads.find((lead) => lead.id === id);
+    if (!currentLead) return;
+    const nextLead = {
+      ...currentLead,
+      [field]: field === 'value' ? clampMoney(value) : value,
+      updatedAt: isoNow()
+    };
+
+    try {
+      const saved = await persistRecord(crmEntities.leads, nextLead);
+      setLeads((current) => current.map((lead) => (lead.id === id ? saved : lead)));
+    } catch (error) {
+      handleSyncError(error);
+    }
   };
 
-  const updateTask = (id, status) => {
-    setTasks((current) => current.map((task) => (task.id === id ? { ...task, status } : task)));
+  const updateTask = async (id, status) => {
+    const currentTask = tasks.find((task) => task.id === id);
+    if (!currentTask) return;
+    const nextTask = { ...currentTask, status, updatedAt: isoNow() };
+
+    try {
+      const saved = await persistRecord(crmEntities.tasks, nextTask);
+      setTasks((current) => current.map((task) => (task.id === id ? saved : task)));
+    } catch (error) {
+      handleSyncError(error);
+    }
   };
 
-  const updatePayment = (id, field, value) => {
-    setPayments((current) => current.map((payment) => {
-      if (payment.id !== id) return payment;
-      const next = {
-        ...payment,
-        [field]: ['amount', 'paid', 'taxRate'].includes(field) ? clampMoney(value) : value
-      };
-      if (field === 'amount' && next.paid > next.amount) {
-        next.paid = next.amount;
-      }
-      return next;
-    }));
+  const updatePayment = async (id, field, value) => {
+    const currentPayment = payments.find((payment) => payment.id === id);
+    if (!currentPayment) return;
+    const nextPayment = {
+      ...currentPayment,
+      [field]: ['amount', 'paid', 'taxRate'].includes(field) ? clampMoney(value) : value,
+      updatedAt: isoNow()
+    };
+    if (field === 'amount' && nextPayment.paid > nextPayment.amount) {
+      nextPayment.paid = nextPayment.amount;
+    }
+
+    try {
+      const saved = await persistRecord(crmEntities.payments, nextPayment);
+      setPayments((current) => current.map((payment) => (payment.id === id ? saved : payment)));
+    } catch (error) {
+      handleSyncError(error);
+    }
   };
 
-  const updateExpense = (id, field, value) => {
-    setExpenses((current) => current.map((expense) => (
-      expense.id === id
-        ? { ...expense, [field]: ['amount', 'taxRate'].includes(field) ? clampMoney(value) : value }
-        : expense
-    )));
+  const updateExpense = async (id, field, value) => {
+    const currentExpense = expenses.find((expense) => expense.id === id);
+    if (!currentExpense) return;
+    const nextExpense = {
+      ...currentExpense,
+      [field]: ['amount', 'taxRate'].includes(field) ? clampMoney(value) : value,
+      updatedAt: isoNow()
+    };
+
+    try {
+      const saved = await persistRecord(crmEntities.expenses, nextExpense);
+      setExpenses((current) => current.map((expense) => (expense.id === id ? saved : expense)));
+    } catch (error) {
+      handleSyncError(error);
+    }
   };
 
-  const addLead = (event) => {
+  const addLead = async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const newLead = {
@@ -435,14 +543,22 @@ function App() {
       paid: 0,
       nextFollowUp: form.get('nextFollowUp'),
       healthNotes: form.get('healthNotes'),
-      lastActivity: 'Lead added manually.'
+      lastActivity: 'Lead added manually.',
+      createdAt: isoNow(),
+      updatedAt: isoNow()
     };
-    setLeads((current) => [newLead, ...current]);
-    setShowLeadForm(false);
-    event.currentTarget.reset();
+
+    try {
+      const saved = await createRecord(crmEntities.leads, newLead);
+      setLeads((current) => [saved, ...current]);
+      setShowLeadForm(false);
+      event.currentTarget.reset();
+    } catch (error) {
+      handleSyncError(error);
+    }
   };
 
-  const addTask = (event) => {
+  const addTask = async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const newTask = {
@@ -452,14 +568,22 @@ function App() {
       owner: form.get('owner') || 'Team',
       due: form.get('due'),
       status: form.get('status'),
-      type: form.get('type')
+      type: form.get('type'),
+      createdAt: isoNow(),
+      updatedAt: isoNow()
     };
-    setTasks((current) => [newTask, ...current]);
-    setShowTaskForm(false);
-    event.currentTarget.reset();
+
+    try {
+      const saved = await createRecord(crmEntities.tasks, newTask);
+      setTasks((current) => [saved, ...current]);
+      setShowTaskForm(false);
+      event.currentTarget.reset();
+    } catch (error) {
+      handleSyncError(error);
+    }
   };
 
-  const addPayment = (event) => {
+  const addPayment = async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const amount = clampMoney(form.get('amount'));
@@ -473,14 +597,22 @@ function App() {
       paid,
       due: form.get('due'),
       taxRate: clampMoney(form.get('taxRate') || 18),
-      status: paid >= amount ? 'Paid' : paid > 0 ? 'Part Paid' : 'Pending'
+      status: paid >= amount ? 'Paid' : paid > 0 ? 'Part Paid' : 'Pending',
+      createdAt: isoNow(),
+      updatedAt: isoNow()
     };
-    setPayments((current) => [newPayment, ...current]);
-    setShowPaymentForm(false);
-    event.currentTarget.reset();
+
+    try {
+      const saved = await createRecord(crmEntities.payments, newPayment);
+      setPayments((current) => [saved, ...current]);
+      setShowPaymentForm(false);
+      event.currentTarget.reset();
+    } catch (error) {
+      handleSyncError(error);
+    }
   };
 
-  const addExpense = (event) => {
+  const addExpense = async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const newExpense = {
@@ -490,11 +622,19 @@ function App() {
       amount: clampMoney(form.get('amount')),
       date: form.get('date'),
       taxRate: clampMoney(form.get('taxRate') || 18),
-      status: form.get('status')
+      status: form.get('status'),
+      createdAt: isoNow(),
+      updatedAt: isoNow()
     };
-    setExpenses((current) => [newExpense, ...current]);
-    setShowExpenseForm(false);
-    event.currentTarget.reset();
+
+    try {
+      const saved = await createRecord(crmEntities.expenses, newExpense);
+      setExpenses((current) => [saved, ...current]);
+      setShowExpenseForm(false);
+      event.currentTarget.reset();
+    } catch (error) {
+      handleSyncError(error);
+    }
   };
 
   const downloadCSV = () => {
@@ -528,8 +668,8 @@ function App() {
   const currentTitle = navItems.find((item) => item.id === active)?.label || 'Dashboard';
 
   return (
-    <div className="crm-shell">
-      <aside className={`sidebar ${mobileNavOpen ? 'open' : ''}`}>
+    <div className={`crm-shell ${sidebarOpen ? 'nav-open' : 'nav-closed'}`}>
+      <aside className="sidebar">
         <div className="sidebar-head">
           <div className="brand-lockup">
             <img src="/strongher-logo.png" alt="StrongHer" />
@@ -549,7 +689,9 @@ function App() {
                 className={active === item.id ? 'active' : ''}
                 onClick={() => {
                   setActive(item.id);
-                  setMobileNavOpen(false);
+                  if (window.matchMedia('(max-width: 860px)').matches) {
+                    setSidebarOpen(false);
+                  }
                 }}
               >
                 <Icon size={18} />
@@ -567,7 +709,7 @@ function App() {
 
       <main className="workspace">
         <header className="topbar">
-          <button className={`icon-button mobile-menu ${mobileNavOpen ? 'active' : ''}`} type="button" onClick={() => setMobileNavOpen((open) => !open)} aria-label={mobileNavOpen ? 'Close menu' : 'Open menu'}>
+          <button className={`icon-button mobile-menu ${sidebarOpen ? 'active' : ''}`} type="button" onClick={() => setSidebarOpen((open) => !open)} aria-label={sidebarOpen ? 'Close menu' : 'Open menu'} aria-expanded={sidebarOpen}>
             <Menu size={20} />
           </button>
           <div>
@@ -585,6 +727,8 @@ function App() {
             </button>
           </div>
         </header>
+
+        <SyncNotice status={syncStatus} />
 
         {active === 'dashboard' && (
           <Dashboard
@@ -1292,6 +1436,16 @@ function Metric({ icon: Icon, label, value, note, tone }) {
       <strong>{value}</strong>
       <small>{note}</small>
     </article>
+  );
+}
+
+function SyncNotice({ status }) {
+  if (status.state === 'connected') return null;
+
+  return (
+    <div className={`sync-notice ${status.state}`} role="status">
+      <span>{status.message}</span>
+    </div>
   );
 }
 
