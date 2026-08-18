@@ -68,7 +68,7 @@ const integrationPlan = {
   ],
   reminderProviders: ['Gmail', 'Google Calendar'],
   userMode: 'Single user: Seema',
-  hosting: 'Deploy online with login access, no custom domain yet'
+  hosting: 'Deploy on Cloudflare Pages with login access later, no custom domain yet'
 };
 
 const seedLeads = [
@@ -238,6 +238,51 @@ function stageStyle(code) {
   return color ? { color, backgroundColor: `${color}16`, borderColor: `${color}33` } : undefined;
 }
 
+function clampMoney(value) {
+  return Math.max(0, Number(value || 0));
+}
+
+function cleanPhone(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length === 10) return `91${digits}`;
+  return digits;
+}
+
+function whatsappUrl(lead, message = '') {
+  const phone = cleanPhone(lead?.phone);
+  const text = message || `Hi ${lead?.name || ''}, this is Seema from StrongHer. I wanted to follow up with you about your fitness coaching enquiry.`;
+  return phone ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}` : '#';
+}
+
+function gmailUrl({ to, subject, body }) {
+  const params = new URLSearchParams({
+    view: 'cm',
+    fs: '1',
+    to: to || '',
+    su: subject || '',
+    body: body || ''
+  });
+  return `https://mail.google.com/mail/?${params.toString()}`;
+}
+
+function calendarUrl({ title, date, details }) {
+  const start = String(date || today).replace(/-/g, '');
+  const nextDate = new Date(`${date || today}T00:00:00`);
+  nextDate.setDate(nextDate.getDate() + 1);
+  const end = nextDate.toISOString().slice(0, 10).replace(/-/g, '');
+  const params = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: title || 'StrongHer follow-up',
+    dates: `${start}/${end}`,
+    details: details || ''
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+function leadOptionLabel(lead) {
+  return `${lead.name} (${lead.id})`;
+}
+
 function useStoredState(key, initialValue) {
   const [value, setValue] = useState(() => {
     try {
@@ -358,7 +403,7 @@ function App() {
       stage: 'OPEN_LEAD',
       priority: form.get('priority'),
       owner: form.get('owner') || 'Team',
-      value: Number(form.get('value') || 0),
+      value: clampMoney(form.get('value')),
       paid: 0,
       nextFollowUp: form.get('nextFollowUp'),
       healthNotes: form.get('healthNotes'),
@@ -389,8 +434,8 @@ function App() {
   const addPayment = (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const amount = Number(form.get('amount') || 0);
-    const paid = Number(form.get('paid') || 0);
+    const amount = clampMoney(form.get('amount'));
+    const paid = Math.min(clampMoney(form.get('paid')), amount);
     const newPayment = {
       id: nextId('INV', payments),
       leadId: form.get('leadId') || '-',
@@ -399,7 +444,7 @@ function App() {
       amount,
       paid,
       due: form.get('due'),
-      taxRate: Number(form.get('taxRate') || 18),
+      taxRate: clampMoney(form.get('taxRate') || 18),
       status: paid >= amount ? 'Paid' : paid > 0 ? 'Part Paid' : 'Pending'
     };
     setPayments((current) => [newPayment, ...current]);
@@ -414,9 +459,9 @@ function App() {
       id: nextId('EXP', expenses),
       category: form.get('category'),
       description: form.get('description'),
-      amount: Number(form.get('amount') || 0),
+      amount: clampMoney(form.get('amount')),
       date: form.get('date'),
-      taxRate: Number(form.get('taxRate') || 18),
+      taxRate: clampMoney(form.get('taxRate') || 18),
       status: form.get('status')
     };
     setExpenses((current) => [newExpense, ...current]);
@@ -457,12 +502,17 @@ function App() {
   return (
     <div className="crm-shell">
       <aside className={`sidebar ${mobileNavOpen ? 'open' : ''}`}>
-        <div className="brand-lockup">
-          <img src="/strongher-logo.png" alt="StrongHer" />
-          <div>
-            <strong>StrongHer</strong>
-            <span>CRM Studio</span>
+        <div className="sidebar-head">
+          <div className="brand-lockup">
+            <img src="/strongher-logo.png" alt="StrongHer" />
+            <div>
+              <strong>StrongHer</strong>
+              <span>CRM Studio</span>
+            </div>
           </div>
+          <button className="icon-button sidebar-close" type="button" onClick={() => setMobileNavOpen(false)} aria-label="Close menu">
+            <X size={18} />
+          </button>
         </div>
         <nav className="nav-list" aria-label="CRM sections">
           {navItems.map((item) => {
@@ -492,7 +542,7 @@ function App() {
 
       <main className="workspace">
         <header className="topbar">
-          <button className="icon-button mobile-menu" type="button" onClick={() => setMobileNavOpen(true)} aria-label="Open menu">
+          <button className={`icon-button mobile-menu ${mobileNavOpen ? 'active' : ''}`} type="button" onClick={() => setMobileNavOpen((open) => !open)} aria-label={mobileNavOpen ? 'Close menu' : 'Open menu'}>
             <Menu size={20} />
           </button>
           <div>
@@ -539,7 +589,7 @@ function App() {
         )}
 
         {active === 'tasks' && (
-          <TasksView tasks={tasks} updateTask={updateTask} onAdd={() => setShowTaskForm(true)} />
+          <TasksView tasks={tasks} leads={leads} updateTask={updateTask} onAdd={() => setShowTaskForm(true)} />
         )}
 
         {active === 'finance' && (
@@ -763,8 +813,9 @@ function LeadsView({ query, setQuery, stageFilter, setStageFilter, priorityFilte
   );
 }
 
-function TasksView({ tasks, updateTask, onAdd }) {
+function TasksView({ tasks, leads, updateTask, onAdd }) {
   const columns = ['Overdue', 'Due Today', 'Upcoming', 'Completed'];
+  const leadLookup = Object.fromEntries(leads.map((lead) => [lead.id, lead]));
 
   return (
     <section className="screen-grid">
@@ -785,7 +836,7 @@ function TasksView({ tasks, updateTask, onAdd }) {
               <article className="task-card" key={task.id}>
                 <div>
                   <strong>{task.title}</strong>
-                  <span>{task.leadId} / {task.type}</span>
+                  <span>{leadLookup[task.leadId]?.name || 'General'} / {task.type}</span>
                 </div>
                 <div className="task-meta">
                   <span>{task.owner}</span>
@@ -893,11 +944,22 @@ function RemindersView({ leads, tasks }) {
     .filter((task) => task.status !== 'Completed')
     .map((task) => {
       const lead = leads.find((item) => item.id === task.leadId);
+      const subject = lead ? `StrongHer follow-up: ${task.title}` : `StrongHer task: ${task.title}`;
+      const body = lead
+        ? `Hi ${lead.name},\n\nThis is Seema from StrongHer. I wanted to follow up about ${lead.program} and your goal: ${lead.goal}.\n\nTask: ${task.title}\nDue: ${task.due}\n\nRegards,\nSeema`
+        : `Task: ${task.title}\nDue: ${task.due}`;
       return {
         ...task,
+        lead,
         leadName: lead?.name || 'General',
         phone: lead?.phone || '-',
-        email: lead?.email || '-'
+        email: lead?.email || '-',
+        gmailHref: gmailUrl({ to: lead?.email, subject, body }),
+        calendarHref: calendarUrl({
+          title: task.title,
+          date: task.due,
+          details: `${lead ? `${lead.name} / ${lead.phone} / ${lead.email}\n` : ''}${task.type} reminder from StrongHer CRM.`
+        })
       };
     });
 
@@ -923,14 +985,14 @@ function RemindersView({ leads, tasks }) {
             <strong>{item.title}</strong>
             <span>{item.leadName}</span>
             <span>{item.due}</span>
-            <button className="ghost-button compact" type="button">
+            <a className="ghost-button compact" href={item.gmailHref} target="_blank" rel="noreferrer">
               <Mail size={15} />
               Send
-            </button>
-            <button className="ghost-button compact" type="button">
+            </a>
+            <a className="ghost-button compact" href={item.calendarHref} target="_blank" rel="noreferrer">
               <CalendarCheck size={15} />
               Add
-            </button>
+            </a>
           </div>
         ))}
       </section>
@@ -978,10 +1040,15 @@ function ClientsView({ leads }) {
                 <strong>{client.nextFollowUp}</strong>
               </div>
             </div>
-            <button className="ghost-button full" type="button">
+            <a
+              className="ghost-button full"
+              href={whatsappUrl(client, `Hi ${client.name}, this is Seema from StrongHer. Checking in on your ${client.program} progress and next review.`)}
+              target="_blank"
+              rel="noreferrer"
+            >
               <MessageCircle size={16} />
               WhatsApp
-            </button>
+            </a>
           </article>
         ))}
       </section>
@@ -1204,7 +1271,7 @@ function LeadModal({ onClose, onSubmit }) {
     <ModalShell title="Add Lead" onClose={onClose}>
       <form className="modal-form" onSubmit={onSubmit}>
         <Input name="name" label="Full Name" required />
-        <Input name="age" label="Age" type="number" required />
+        <Input name="age" label="Age" type="number" min="1" required />
         <Input name="city" label="City" required />
         <Input name="phone" label="WhatsApp Number" required />
         <Input name="email" label="Email" type="email" required />
@@ -1213,7 +1280,7 @@ function LeadModal({ onClose, onSubmit }) {
         <Select name="program" label="Program" options={programs} />
         <Select name="priority" label="Priority" options={priorities} />
         <Input name="owner" label="Owner" />
-        <Input name="value" label="Lead Value" type="number" required />
+        <Input name="value" label="Expected Package Amount (Rs)" type="number" min="0" step="1" required />
         <Input name="nextFollowUp" label="Next Follow-up" type="date" required />
         <label className="field full-field">
           <span>Health Notes</span>
@@ -1232,11 +1299,13 @@ function LeadModal({ onClose, onSubmit }) {
 }
 
 function TaskModal({ onClose, onSubmit, leads }) {
+  const leadOptions = [{ value: '-', label: 'General task' }, ...leads.map((lead) => ({ value: lead.id, label: leadOptionLabel(lead) }))];
+
   return (
     <ModalShell title="Add Task" onClose={onClose}>
       <form className="modal-form" onSubmit={onSubmit}>
         <Input name="title" label="Task" required />
-        <Select name="leadId" label="Lead" options={['-', ...leads.map((lead) => lead.id)]} />
+        <Select name="leadId" label="Lead" options={leadOptions} />
         <Select name="type" label="Type" options={['Call', 'WhatsApp', 'Review', 'Finance', 'Admin']} />
         <Select name="status" label="Status" options={['Overdue', 'Due Today', 'Upcoming', 'Completed']} />
         <Input name="owner" label="Owner" />
@@ -1254,15 +1323,17 @@ function TaskModal({ onClose, onSubmit, leads }) {
 }
 
 function PaymentModal({ onClose, onSubmit, leads }) {
+  const leadOptions = [{ value: '-', label: 'No linked lead' }, ...leads.map((lead) => ({ value: lead.id, label: leadOptionLabel(lead) }))];
+
   return (
     <ModalShell title="Add Invoice" onClose={onClose}>
       <form className="modal-form" onSubmit={onSubmit}>
         <Input name="client" label="Client Name" required />
-        <Select name="leadId" label="Lead" options={['-', ...leads.map((lead) => lead.id)]} />
+        <Select name="leadId" label="Lead" options={leadOptions} />
         <Select name="program" label="Program" options={programs} />
-        <Input name="amount" label="Amount" type="number" required />
-        <Input name="paid" label="Paid" type="number" required />
-        <Input name="taxRate" label="Tax Rate %" type="number" />
+        <Input name="amount" label="Amount (Rs)" type="number" min="0" step="1" required />
+        <Input name="paid" label="Paid (Rs)" type="number" min="0" step="1" required />
+        <Input name="taxRate" label="Tax Rate %" type="number" min="0" step="0.1" />
         <Input name="due" label="Due Date" type="date" required />
         <div className="modal-actions">
           <button className="ghost-button" type="button" onClick={onClose}>Cancel</button>
@@ -1282,8 +1353,8 @@ function ExpenseModal({ onClose, onSubmit }) {
       <form className="modal-form" onSubmit={onSubmit}>
         <Select name="category" label="Category" options={['Marketing', 'Tools & Software', 'Operations', 'Professional Fees', 'Payouts', 'Taxes', 'Other']} />
         <Input name="description" label="Description" required />
-        <Input name="amount" label="Amount" type="number" required />
-        <Input name="taxRate" label="Tax Rate %" type="number" />
+        <Input name="amount" label="Amount (Rs)" type="number" min="0" step="1" required />
+        <Input name="taxRate" label="Tax Rate %" type="number" min="0" step="0.1" />
         <Input name="date" label="Date" type="date" required />
         <Select name="status" label="Status" options={['Paid', 'Pending', 'Planned']} />
         <div className="modal-actions">
@@ -1298,11 +1369,11 @@ function ExpenseModal({ onClose, onSubmit }) {
   );
 }
 
-function Input({ name, label, type = 'text', required = false }) {
+function Input({ name, label, type = 'text', required = false, ...props }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input name={name} type={type} required={required} />
+      <input name={name} type={type} required={required} {...props} />
     </label>
   );
 }
@@ -1312,7 +1383,10 @@ function Select({ name, label, options }) {
     <label className="field">
       <span>{label}</span>
       <select name={name}>
-        {options.map((option) => <option key={option}>{option}</option>)}
+        {options.map((option) => {
+          const normalized = typeof option === 'string' ? { value: option, label: option } : option;
+          return <option key={normalized.value} value={normalized.value}>{normalized.label}</option>;
+        })}
       </select>
     </label>
   );

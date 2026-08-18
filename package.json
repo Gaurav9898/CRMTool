@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build && node scripts/create-sites-worker.mjs",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "deploy:cloudflare": "npm run build && npx wrangler pages deploy dist --project-name=strongher-crm-tool"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.1",
