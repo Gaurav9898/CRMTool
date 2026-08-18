@@ -23,7 +23,7 @@ Use Cloudflare Pages with:
 
 - Build command: `npm run build`
 - Output directory: `dist`
-- Project name: `strongher-crm-tool`
+- Project name: `crm-tool`
 
 CLI deploy:
 
@@ -35,7 +35,11 @@ npm run deploy:cloudflare
 
 Right now, the CRM stores records in browser `localStorage` so the UI can be reviewed quickly.
 
-For real use, create a Google Spreadsheet named `StrongHer CRM Data` and import the CSV files from:
+For real use, connect the Google Spreadsheet:
+
+`https://docs.google.com/spreadsheets/d/1jyrihEYdXq4Mz_Exerbl1GlA8wmdH3jQFr1fbuBWKo4/edit?gid=539139390#gid=539139390`
+
+If rebuilding the workbook, import the CSV files from:
 
 `sheet-templates/`
 

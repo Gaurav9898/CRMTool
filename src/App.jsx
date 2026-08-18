@@ -57,6 +57,12 @@ const integrationPlan = {
     sourceUrl: 'https://docs.google.com/spreadsheets/d/19Wm3dqs5d6f4AFiEGk7A_g_DGsQ2FrYQ_LWvafFnMbU/edit?gid=1770350818#gid=1770350818',
     mode: 'Google Sheets now, PostgreSQL later'
   },
+  crmWorkbook: {
+    spreadsheetId: '1jyrihEYdXq4Mz_Exerbl1GlA8wmdH3jQFr1fbuBWKo4',
+    gid: '539139390',
+    sourceUrl: 'https://docs.google.com/spreadsheets/d/1jyrihEYdXq4Mz_Exerbl1GlA8wmdH3jQFr1fbuBWKo4/edit?gid=539139390#gid=539139390',
+    mode: 'CRM data workbook for leads, status history, tasks, finance, reminders, clients, and settings'
+  },
   crmSheets: [
     { name: 'Leads', purpose: 'Normalized enquiry records and stage ownership' },
     { name: 'Tasks', purpose: 'Follow-ups, calls, admin work, and reviews' },
@@ -1215,6 +1221,29 @@ function SettingsView() {
           <a className="ghost-button full" href={integrationPlan.enquirySheet.sourceUrl} target="_blank" rel="noreferrer">
             <FileText size={16} />
             Open Enquiry Sheet
+          </a>
+        </div>
+      </section>
+
+      <section className="panel wide-copy">
+        <div className="panel-title">
+          <div>
+            <span>Google Sheets</span>
+            <h2>CRM Data Workbook</h2>
+          </div>
+        </div>
+        <div className="integration-card">
+          <div>
+            <span>Spreadsheet ID</span>
+            <strong>{integrationPlan.crmWorkbook.spreadsheetId}</strong>
+          </div>
+          <div>
+            <span>Sheet GID</span>
+            <strong>{integrationPlan.crmWorkbook.gid}</strong>
+          </div>
+          <a className="ghost-button full" href={integrationPlan.crmWorkbook.sourceUrl} target="_blank" rel="noreferrer">
+            <FileText size={16} />
+            Open CRM Workbook
           </a>
         </div>
       </section>
