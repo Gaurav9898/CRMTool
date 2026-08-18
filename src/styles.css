@@ -162,14 +162,6 @@ button {
   margin-bottom: 18px;
 }
 
-.topbar p {
-  margin: 0 0 4px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
 .topbar h1 {
   margin: 0;
   font-family: "Playfair Display", serif;

@@ -817,7 +817,6 @@ function App() {
             <Menu size={20} />
           </button>
           <div>
-            <p>StrongHer by Seema</p>
             <h1>{currentTitle}</h1>
           </div>
           <div className="topbar-actions">
