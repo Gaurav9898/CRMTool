@@ -1,5 +1,5 @@
 const allowedEntities = new Set(['leads', 'tasks', 'financeInvoices', 'financeExpenses', 'websiteEnquiries']);
-const allowedActions = new Set(['list', 'create', 'upsert', 'delete', 'remove']);
+const allowedActions = new Set(['bootstrap', 'list', 'create', 'upsert', 'delete', 'remove']);
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -13,6 +13,22 @@ function json(data, status = 200) {
 
 function getSheetsUrl(env) {
   return env.GOOGLE_SHEETS_WEB_APP_URL || env.SHEETS_WEB_APP_URL || '';
+}
+
+async function fetchWithTimeout(url, options, timeoutMs = 35000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('Apps Script request timed out. Google Sheets may be busy; try again in a moment.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function onRequestGet({ env }) {
@@ -46,7 +62,7 @@ export async function onRequestPost({ request, env }) {
     return json({ ok: false, error: 'Unsupported CRM action' }, 400);
   }
 
-  if (!allowedEntities.has(payload.entity)) {
+  if (payload.action !== 'bootstrap' && !allowedEntities.has(payload.entity)) {
     return json({ ok: false, error: 'Unsupported CRM sheet entity' }, 400);
   }
 
@@ -56,7 +72,7 @@ export async function onRequestPost({ request, env }) {
   };
 
   try {
-    const response = await fetch(sheetsUrl, {
+    const response = await fetchWithTimeout(sheetsUrl, {
       method: 'POST',
       headers: { 'content-type': 'text/plain; charset=utf-8' },
       body: JSON.stringify(outbound)

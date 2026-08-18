@@ -338,24 +338,60 @@ function mergeLeadsWithEnquiries(sheetLeads, websiteEnquiries) {
   return merged;
 }
 
-async function optionalCrmRequest(action, entity, payload = {}) {
+async function optionalCrmRequest(action, entity, payload = {}, options = {}) {
   try {
-    return await crmRequest(action, entity, payload);
+    return await crmRequest(action, entity, payload, options);
   } catch (error) {
     return { ok: false, records: [], error: error.message };
   }
+}
+
+function recordsFromSettled(result) {
+  if (result.status === 'fulfilled') {
+    return result.value.records || [];
+  }
+  return [];
+}
+
+function errorFromSettled(result, label) {
+  if (result.status === 'rejected') {
+    return `${label}: ${result.reason?.message || 'failed to load'}`;
+  }
+  if (result.value?.ok === false) {
+    return `${label}: ${result.value.error || 'failed to load'}`;
+  }
+  return '';
 }
 
 function leadOptionLabel(lead) {
   return `${lead.name} (${lead.id})`;
 }
 
-async function crmRequest(action, entity, payload = {}) {
-  const response = await fetch('/api/crm', {
+async function fetchWithTimeout(url, options = {}, timeoutMs = 45000) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('Google Sheets request timed out. Apps Script may still be running; refresh in a moment.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function crmRequest(action, entity, payload = {}, options = {}) {
+  const requestBody = { action, ...payload };
+  if (entity) requestBody.entity = entity;
+
+  const response = await fetchWithTimeout('/api/crm', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action, entity, ...payload })
-  });
+    body: JSON.stringify(requestBody)
+  }, options.timeoutMs);
   const result = await response.json().catch(() => ({}));
   if (!response.ok || result.ok === false) {
     throw new Error(result.error || 'Sheet save failed');
@@ -418,33 +454,43 @@ function App() {
 
     async function loadSheets() {
       try {
-        const healthResponse = await fetch('/api/crm');
+        const healthResponse = await fetchWithTimeout('/api/crm', {}, 12000);
         const health = await healthResponse.json();
         if (!health.configured) {
           throw new Error(health.error || 'Google Sheets API is not configured');
         }
 
-        const [sheetLeads, sheetTasks, sheetPayments, sheetExpenses] = await Promise.all([
-          crmRequest('list', crmEntities.leads),
-          crmRequest('list', crmEntities.tasks),
-          crmRequest('list', crmEntities.payments),
-          crmRequest('list', crmEntities.expenses)
+        setSyncStatus({ state: 'checking', message: 'Loading Google Sheets data' });
+        const [leadResult, enquiryResult, taskResult, paymentResult, expenseResult] = await Promise.allSettled([
+          crmRequest('list', crmEntities.leads, {}, { timeoutMs: 15000 }),
+          optionalCrmRequest('list', crmEntities.websiteEnquiries, {}, { timeoutMs: 15000 }),
+          crmRequest('list', crmEntities.tasks, {}, { timeoutMs: 15000 }),
+          crmRequest('list', crmEntities.payments, {}, { timeoutMs: 15000 }),
+          crmRequest('list', crmEntities.expenses, {}, { timeoutMs: 15000 })
         ]);
-        const websiteEnquiries = await optionalCrmRequest('list', crmEntities.websiteEnquiries);
+
+        const loadErrors = [
+          errorFromSettled(leadResult, 'CRM leads'),
+          errorFromSettled(enquiryResult, 'Website enquiries'),
+          errorFromSettled(taskResult, 'Tasks'),
+          errorFromSettled(paymentResult, 'Invoices'),
+          errorFromSettled(expenseResult, 'Expenses')
+        ].filter(Boolean);
+
+        const sheetLeads = recordsFromSettled(leadResult);
+        const websiteEnquiries = recordsFromSettled(enquiryResult);
+        const sheetTasks = recordsFromSettled(taskResult);
+        const sheetPayments = recordsFromSettled(paymentResult);
+        const sheetExpenses = recordsFromSettled(expenseResult);
 
         if (cancelled) return;
-        setLeads(mergeLeadsWithEnquiries(sheetLeads.records || [], websiteEnquiries.records || []));
-        setTasks(sheetTasks.records || []);
-        setPayments(sheetPayments.records || []);
-        setExpenses(sheetExpenses.records || []);
+        setLeads(mergeLeadsWithEnquiries(sheetLeads, websiteEnquiries));
+        setTasks(sheetTasks);
+        setPayments(sheetPayments);
+        setExpenses(sheetExpenses);
         setSyncStatus(
-          websiteEnquiries.ok === false
-            ? {
-                state: 'warning',
-                message: websiteEnquiries.error?.includes('Unsupported entity')
-                  ? 'CRM sheets are connected. Website enquiries are still calling an old Apps Script Web App URL in Cloudflare. Update GOOGLE_SHEETS_WEB_APP_URL to the latest /exec URL.'
-                  : `CRM sheets are connected. Website enquiry import needs attention: ${websiteEnquiries.error}`
-              }
+          loadErrors.length
+            ? { state: 'warning', message: `Loaded available sheet data. ${loadErrors.join(' | ')}` }
             : { state: 'connected', message: 'Google Sheets connected' }
         );
       } catch (error) {

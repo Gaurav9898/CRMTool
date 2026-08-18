@@ -181,6 +181,10 @@ function doPost(event) {
       throw new Error('Invalid shared secret');
     }
 
+    if (body.action === 'bootstrap') {
+      return json_({ ok: true, data: bootstrap_() });
+    }
+
     setupSheets_();
 
     if (body.action === 'list') {
@@ -232,6 +236,17 @@ function setupSheets_() {
     historySheet.getRange(1, 1, 1, historyHeaders.length).setValues([historyHeaders]);
     historySheet.setFrozenRows(1);
   }
+}
+
+function bootstrap_() {
+  setupSheets_();
+  return {
+    leads: list_('leads'),
+    tasks: list_('tasks'),
+    financeInvoices: list_('financeInvoices'),
+    financeExpenses: list_('financeExpenses'),
+    websiteEnquiries: listWebsiteEnquiries_()
+  };
 }
 
 function list_(entity) {
