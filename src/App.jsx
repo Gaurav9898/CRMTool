@@ -346,21 +346,10 @@ async function optionalCrmRequest(action, entity, payload = {}, options = {}) {
   }
 }
 
-function recordsFromSettled(result) {
-  if (result.status === 'fulfilled') {
-    return result.value.records || [];
-  }
-  return [];
-}
-
-function errorFromSettled(result, label) {
-  if (result.status === 'rejected') {
-    return `${label}: ${result.reason?.message || 'failed to load'}`;
-  }
-  if (result.value?.ok === false) {
-    return `${label}: ${result.value.error || 'failed to load'}`;
-  }
-  return '';
+function compactLoadError(message) {
+  if (!message) return 'failed to load';
+  if (message.includes('timed out')) return 'timed out';
+  return message;
 }
 
 function leadOptionLabel(lead) {
@@ -460,37 +449,55 @@ function App() {
           throw new Error(health.error || 'Google Sheets API is not configured');
         }
 
-        setSyncStatus({ state: 'checking', message: 'Loading Google Sheets data' });
-        const [leadResult, enquiryResult, taskResult, paymentResult, expenseResult] = await Promise.allSettled([
-          crmRequest('list', crmEntities.leads, {}, { timeoutMs: 15000 }),
-          optionalCrmRequest('list', crmEntities.websiteEnquiries, {}, { timeoutMs: 15000 }),
-          crmRequest('list', crmEntities.tasks, {}, { timeoutMs: 15000 }),
-          crmRequest('list', crmEntities.payments, {}, { timeoutMs: 15000 }),
-          crmRequest('list', crmEntities.expenses, {}, { timeoutMs: 15000 })
-        ]);
+        const loadErrors = [];
+        let sheetLeads = [];
+        let websiteEnquiries = [];
 
-        const loadErrors = [
-          errorFromSettled(leadResult, 'CRM leads'),
-          errorFromSettled(enquiryResult, 'Website enquiries'),
-          errorFromSettled(taskResult, 'Tasks'),
-          errorFromSettled(paymentResult, 'Invoices'),
-          errorFromSettled(expenseResult, 'Expenses')
-        ].filter(Boolean);
+        setSyncStatus({ state: 'checking', message: 'Loading CRM leads' });
+        try {
+          const result = await crmRequest('list', crmEntities.leads, {}, { timeoutMs: 35000 });
+          sheetLeads = result.records || [];
+          if (!cancelled) setLeads(sheetLeads);
+        } catch (error) {
+          loadErrors.push(`CRM leads ${compactLoadError(error.message)}`);
+        }
 
-        const sheetLeads = recordsFromSettled(leadResult);
-        const websiteEnquiries = recordsFromSettled(enquiryResult);
-        const sheetTasks = recordsFromSettled(taskResult);
-        const sheetPayments = recordsFromSettled(paymentResult);
-        const sheetExpenses = recordsFromSettled(expenseResult);
+        setSyncStatus({ state: 'checking', message: 'Loading website enquiries' });
+        const enquiryResult = await optionalCrmRequest('list', crmEntities.websiteEnquiries, {}, { timeoutMs: 35000 });
+        if (enquiryResult.ok === false) {
+          loadErrors.push(`Website enquiries ${compactLoadError(enquiryResult.error)}`);
+        } else {
+          websiteEnquiries = enquiryResult.records || [];
+        }
+        if (!cancelled) setLeads(mergeLeadsWithEnquiries(sheetLeads, websiteEnquiries));
+
+        setSyncStatus({ state: 'checking', message: 'Loading tasks' });
+        try {
+          const result = await crmRequest('list', crmEntities.tasks, {}, { timeoutMs: 35000 });
+          if (!cancelled) setTasks(result.records || []);
+        } catch (error) {
+          loadErrors.push(`Tasks ${compactLoadError(error.message)}`);
+        }
+
+        setSyncStatus({ state: 'checking', message: 'Loading finance' });
+        try {
+          const result = await crmRequest('list', crmEntities.payments, {}, { timeoutMs: 35000 });
+          if (!cancelled) setPayments(result.records || []);
+        } catch (error) {
+          loadErrors.push(`Invoices ${compactLoadError(error.message)}`);
+        }
+
+        try {
+          const result = await crmRequest('list', crmEntities.expenses, {}, { timeoutMs: 35000 });
+          if (!cancelled) setExpenses(result.records || []);
+        } catch (error) {
+          loadErrors.push(`Expenses ${compactLoadError(error.message)}`);
+        }
 
         if (cancelled) return;
-        setLeads(mergeLeadsWithEnquiries(sheetLeads, websiteEnquiries));
-        setTasks(sheetTasks);
-        setPayments(sheetPayments);
-        setExpenses(sheetExpenses);
         setSyncStatus(
           loadErrors.length
-            ? { state: 'warning', message: `Loaded available sheet data. ${loadErrors.join(' | ')}` }
+            ? { state: 'warning', message: `Loaded available sheet data. Slow sheets: ${loadErrors.join(', ')}` }
             : { state: 'connected', message: 'Google Sheets connected' }
         );
       } catch (error) {
