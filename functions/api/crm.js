@@ -12,7 +12,19 @@ function json(data, status = 200) {
 }
 
 function getSheetsUrl(env) {
-  return env.GOOGLE_SHEETS_WEB_APP_URL || env.SHEETS_WEB_APP_URL || '';
+  return (env.GOOGLE_SHEETS_WEB_APP_URL || env.SHEETS_WEB_APP_URL || '').trim();
+}
+
+function validateSheetsUrl(url) {
+  if (!url) {
+    return 'Set GOOGLE_SHEETS_WEB_APP_URL in Cloudflare Pages environment variables';
+  }
+
+  if (!url.includes('script.google.com/macros/s/') || !url.endsWith('/exec')) {
+    return 'GOOGLE_SHEETS_WEB_APP_URL must be the Apps Script Web app /exec URL, not the Apps Script editor URL, deployment ID, /dev URL, or Google Sheet URL.';
+  }
+
+  return '';
 }
 
 async function fetchWithTimeout(url, options, timeoutMs = 90000) {
@@ -32,22 +44,25 @@ async function fetchWithTimeout(url, options, timeoutMs = 90000) {
 }
 
 export async function onRequestGet({ env }) {
-  const configured = Boolean(getSheetsUrl(env));
+  const sheetsUrl = getSheetsUrl(env);
+  const setupError = validateSheetsUrl(sheetsUrl);
+  const configured = !setupError;
   return json({
     ok: configured,
     configured,
     spreadsheetId: env.CRM_SPREADSHEET_ID || '1jyrihEYdXq4Mz_Exerbl1GlA8wmdH3jQFr1fbuBWKo4',
-    error: configured ? null : 'Set GOOGLE_SHEETS_WEB_APP_URL in Cloudflare Pages environment variables'
+    error: configured ? null : setupError
   }, configured ? 200 : 501);
 }
 
 export async function onRequestPost({ request, env }) {
   const sheetsUrl = getSheetsUrl(env);
-  if (!sheetsUrl) {
+  const setupError = validateSheetsUrl(sheetsUrl);
+  if (setupError) {
     return json({
       ok: false,
       configured: false,
-      error: 'Google Sheets is not connected. Set GOOGLE_SHEETS_WEB_APP_URL in Cloudflare Pages.'
+      error: setupError
     }, 501);
   }
 
@@ -86,7 +101,7 @@ export async function onRequestPost({ request, env }) {
       return json({
         ok: false,
         error: looksLikeHtml
-          ? 'Apps Script returned an HTML page. Set the Web App access to Anyone and use the /exec Web app URL in GOOGLE_SHEETS_WEB_APP_URL.'
+          ? 'Apps Script returned an HTML page. In Apps Script deploy the Web app with access set to Anyone, then paste the latest /exec URL into GOOGLE_SHEETS_WEB_APP_URL.'
           : 'Apps Script returned an invalid response.'
       }, 502);
     }
