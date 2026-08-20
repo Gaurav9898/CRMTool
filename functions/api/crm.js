@@ -43,6 +43,47 @@ async function fetchWithTimeout(url, options, timeoutMs = 90000) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function describeInvalidResponse(text, status, contentType) {
+  const trimmed = text.trim();
+  const looksLikeHtml = trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html');
+  if (looksLikeHtml) {
+    return 'Apps Script returned an HTML page. In Apps Script deploy the Web app with access set to Anyone, then paste the latest /exec URL into GOOGLE_SHEETS_WEB_APP_URL.';
+  }
+
+  const preview = trimmed.replace(/\s+/g, ' ').slice(0, 120);
+  const details = [`status ${status}`];
+  if (contentType) details.push(contentType);
+  if (preview) details.push(`body: ${preview}`);
+  return `Apps Script returned a non-JSON response (${details.join(', ')}).`;
+}
+
+async function callAppsScript(sheetsUrl, outbound) {
+  const response = await fetchWithTimeout(sheetsUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain; charset=utf-8' },
+    body: JSON.stringify(outbound)
+  });
+  const text = await response.text();
+  const contentType = response.headers.get('content-type') || '';
+
+  try {
+    return { response, result: JSON.parse(text) };
+  } catch {
+    return {
+      response,
+      result: {
+        ok: false,
+        error: describeInvalidResponse(text, response.status, contentType)
+      },
+      invalidJson: true
+    };
+  }
+}
+
 export async function onRequestGet({ env }) {
   const sheetsUrl = getSheetsUrl(env);
   const setupError = validateSheetsUrl(sheetsUrl);
@@ -87,23 +128,10 @@ export async function onRequestPost({ request, env }) {
   };
 
   try {
-    const response = await fetchWithTimeout(sheetsUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'text/plain; charset=utf-8' },
-      body: JSON.stringify(outbound)
-    });
-    const text = await response.text();
-    let result;
-    try {
-      result = JSON.parse(text);
-    } catch {
-      const looksLikeHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
-      return json({
-        ok: false,
-        error: looksLikeHtml
-          ? 'Apps Script returned an HTML page. In Apps Script deploy the Web app with access set to Anyone, then paste the latest /exec URL into GOOGLE_SHEETS_WEB_APP_URL.'
-          : 'Apps Script returned an invalid response.'
-      }, 502);
+    let { response, result, invalidJson } = await callAppsScript(sheetsUrl, outbound);
+    if (invalidJson && payload.action === 'bootstrap') {
+      await sleep(1200);
+      ({ response, result } = await callAppsScript(sheetsUrl, outbound));
     }
 
     if (!response.ok || result.ok === false) {

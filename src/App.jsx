@@ -462,6 +462,20 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
   }
 }
 
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isRetryableSheetsError(error) {
+  const message = error?.message || '';
+  return [
+    'invalid response',
+    'non-JSON response',
+    'timed out',
+    'Apps Script returned an HTML page'
+  ].some((pattern) => message.includes(pattern));
+}
+
 async function crmRequest(action, entity, payload = {}, options = {}) {
   const requestBody = { action, ...payload };
   if (entity) requestBody.entity = entity;
@@ -476,6 +490,23 @@ async function crmRequest(action, entity, payload = {}, options = {}) {
     throw new Error(result.error || 'Sheet save failed');
   }
   return result;
+}
+
+async function crmRequestWithRetry(action, entity, payload = {}, options = {}) {
+  const retries = options.retries ?? 1;
+  let lastError;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await crmRequest(action, entity, payload, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !isRetryableSheetsError(error)) break;
+      await delay(1200);
+    }
+  }
+
+  throw lastError;
 }
 
 function isoNow() {
@@ -541,7 +572,7 @@ function App() {
         }
 
         setSyncStatus({ state: 'checking', message: 'Loading Google Sheets data' });
-        const result = await crmRequest('bootstrap', null, {}, { timeoutMs: 90000 });
+        const result = await crmRequestWithRetry('bootstrap', null, {}, { timeoutMs: 90000, retries: 2 });
         const data = result.data || {};
         const sheetLeads = data.leads || [];
         const websiteEnquiries = data.websiteEnquiries || [];
@@ -557,10 +588,6 @@ function App() {
         setSyncStatus({ state: 'connected', message: 'Google Sheets connected' });
       } catch (error) {
         if (cancelled) return;
-        setLeads([]);
-        setTasks([]);
-        setPayments([]);
-        setExpenses([]);
         setSyncStatus({ state: 'setup', message: error.message });
       }
     }
