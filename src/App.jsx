@@ -52,6 +52,8 @@ const stages = [
 const stageLookup = Object.fromEntries(stages.map((stage) => [stage.code, stage]));
 const priorities = ['Hot', 'Warm', 'Cold'];
 const programs = ['Online Coaching', '1:1 Live Training', 'In-Person Training', 'Habit Coaching', 'Special Conditions'];
+const clientStageCodes = new Set(['PAYMENT_RECEIVED', 'LEAD_CONVERTED']);
+const activeInvoiceStatuses = new Set(['Pending', 'Part Paid', 'Paid']);
 
 const integrationPlan = {
   enquirySheet: {
@@ -211,7 +213,7 @@ const navItems = [
   { id: 'settings', label: 'Settings', icon: Settings }
 ];
 
-const today = '2026-08-18';
+const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 const demoMode = import.meta.env.VITE_ENABLE_DEMO_DATA === 'true';
 const initialLeads = demoMode ? seedLeads : [];
 const initialTasks = demoMode ? seedTasks : [];
@@ -241,8 +243,62 @@ function nextId(prefix, list) {
   const ids = list
     .map((item) => Number(String(item.id).split('-').pop()))
     .filter((value) => Number.isFinite(value));
-  const next = Math.max(0, ...ids) + 1;
+  const base = prefix === 'INV' ? 300 : 0;
+  const next = Math.max(base, ...ids) + 1;
   return `${prefix}-${next}`;
+}
+
+function clientIdForInvoice(invoice) {
+  if (invoice.clientId) return invoice.clientId;
+  if (invoice.leadId && invoice.leadId !== '-') return invoice.leadId;
+  if (invoice.clientEmail) return `EMAIL-${stableKey(invoice.clientEmail)}`;
+  if (invoice.clientPhone) return `PHONE-${stableKey(invoice.clientPhone)}`;
+  return `CLIENT-${stableKey(invoice.client || 'unknown')}`;
+}
+
+function stableKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 36) || 'unknown';
+}
+
+function invoiceVersionKey(invoice) {
+  return [
+    clientIdForInvoice(invoice),
+    invoice.program || '',
+    invoice.description || '',
+    Number(invoice.amount || 0),
+    Number(invoice.discountAmount || 0),
+    Number(invoice.taxRate || 0),
+    invoice.invoiceDate || ''
+  ].join('|');
+}
+
+function invoiceOrderValue(invoice) {
+  const numericId = Number(String(invoice.id || '').split('-').pop());
+  const time = Date.parse(invoice.updatedAt || invoice.createdAt || invoice.invoiceDate || '');
+  return Number.isFinite(time) ? time : Number.isFinite(numericId) ? numericId : 0;
+}
+
+function latestInvoiceVersions(invoices) {
+  const versions = new Map();
+  invoices.forEach((invoice) => {
+    const key = invoiceVersionKey(invoice);
+    const existing = versions.get(key);
+    if (!existing || invoiceOrderValue(invoice) >= invoiceOrderValue(existing)) {
+      versions.set(key, invoice);
+    }
+  });
+  return Array.from(versions.values());
+}
+
+function isClientStage(stage) {
+  return clientStageCodes.has(stage);
+}
+
+function isPaidInvoice(invoice) {
+  return invoice.status === 'Paid';
 }
 
 function classNameFor(value) {
@@ -553,24 +609,28 @@ function App() {
     setSyncStatus({ state: 'error', message: error.message || 'Google Sheets save failed' });
   };
 
+  const pipelineLeads = useMemo(() => leads.filter((lead) => !isClientStage(lead.stage)), [leads]);
+  const currentInvoices = useMemo(() => latestInvoiceVersions(payments), [payments]);
+
   const metrics = useMemo(() => {
-    const totalValue = leads.reduce((sum, lead) => sum + lead.value, 0);
-    const revenue = payments.reduce((sum, item) => sum + item.paid, 0);
-    const outstanding = payments.reduce((sum, item) => sum + Math.max((item.total || item.amount) - item.paid, 0), 0);
+    const billableInvoices = currentInvoices.filter((item) => activeInvoiceStatuses.has(item.status));
+    const totalValue = pipelineLeads.reduce((sum, lead) => sum + lead.value, 0);
+    const revenue = billableInvoices.reduce((sum, item) => sum + item.paid, 0);
+    const outstanding = billableInvoices.reduce((sum, item) => sum + Math.max((item.total || item.amount) - item.paid, 0), 0);
     const totalExpenses = expenses.reduce((sum, item) => sum + item.amount, 0);
-    const taxReserve = [...payments, ...expenses].reduce((sum, item) => {
+    const taxReserve = [...billableInvoices, ...expenses].reduce((sum, item) => {
       const taxableBase = item.paid ?? item.amount;
       return sum + Math.round((taxableBase * (item.taxRate ?? 18)) / 100);
     }, 0);
     const profit = revenue - totalExpenses - taxReserve;
-    const converted = leads.filter((lead) => ['LEAD_CONVERTED', 'PAYMENT_RECEIVED'].includes(lead.stage)).length;
-    const hot = leads.filter((lead) => lead.priority === 'Hot').length;
+    const converted = leads.filter((lead) => isClientStage(lead.stage)).length;
+    const hot = pipelineLeads.filter((lead) => lead.priority === 'Hot').length;
     const overdueTasks = tasks.filter((task) => task.status === 'Overdue').length;
     const dueToday = tasks.filter((task) => isSameDate(task.due, today) && task.status !== 'Completed').length;
 
     return {
-      totalLeads: leads.length,
-      activeLeads: leads.filter((lead) => !['LEAD_CONVERTED', 'LEAD_LOST', 'JUNK_LEAD'].includes(lead.stage)).length,
+      totalLeads: pipelineLeads.length,
+      activeLeads: pipelineLeads.filter((lead) => !['LEAD_LOST', 'JUNK_LEAD'].includes(lead.stage)).length,
       conversionRate: leads.length ? Math.round((converted / leads.length) * 100) : 0,
       hot,
       totalValue,
@@ -582,10 +642,10 @@ function App() {
       overdueTasks,
       dueToday
     };
-  }, [expenses, leads, payments, tasks]);
+  }, [currentInvoices, expenses, leads, pipelineLeads, tasks]);
 
   const filteredLeads = useMemo(() => {
-    return leads.filter((lead) => {
+    return pipelineLeads.filter((lead) => {
       const matchesQuery = [lead.name, lead.city, lead.phone, lead.email, lead.goal, lead.program]
         .join(' ')
         .toLowerCase()
@@ -594,23 +654,23 @@ function App() {
       const matchesPriority = priorityFilter === 'All' || lead.priority === priorityFilter;
       return matchesQuery && matchesStage && matchesPriority;
     });
-  }, [leads, priorityFilter, query, stageFilter]);
+  }, [pipelineLeads, priorityFilter, query, stageFilter]);
 
-  const revenueTrend = useMemo(() => buildRevenueTrend(payments), [payments]);
+  const revenueTrend = useMemo(() => buildRevenueTrend(currentInvoices.filter((invoice) => activeInvoiceStatuses.has(invoice.status))), [currentInvoices]);
 
   const stageCounts = stages.map((stage) => ({
     ...stage,
-    count: leads.filter((lead) => lead.stage === stage.code).length
+    count: pipelineLeads.filter((lead) => lead.stage === stage.code).length
   }));
 
   const programMix = programs.map((program) => ({
     program,
-    count: leads.filter((lead) => lead.program === program).length
+    count: pipelineLeads.filter((lead) => lead.program === program).length
   }));
 
   const sourcePerformance = ['Instagram', 'Referral', 'Protein Plate', 'Existing Client', 'Event/Workshop'].map((source) => {
-    const sourceLeads = leads.filter((lead) => lead.source === source);
-    const converted = sourceLeads.filter((lead) => ['LEAD_CONVERTED', 'PAYMENT_RECEIVED'].includes(lead.stage)).length;
+    const sourceLeads = pipelineLeads.filter((lead) => lead.source === source);
+    const converted = leads.filter((lead) => lead.source === source && isClientStage(lead.stage)).length;
     return {
       source,
       leads: sourceLeads.length,
@@ -675,6 +735,23 @@ function App() {
     }
   };
 
+  const moveLinkedLeadToClient = async (invoice) => {
+    if (!isPaidInvoice(invoice) || !invoice.leadId || invoice.leadId === '-') return;
+    const linkedLead = leads.find((lead) => lead.id === invoice.leadId);
+    if (!linkedLead) return;
+
+    const nextLead = {
+      ...linkedLead,
+      stage: 'PAYMENT_RECEIVED',
+      paid: Math.max(clampMoney(linkedLead.paid), clampMoney(invoice.paid)),
+      value: Math.max(clampMoney(linkedLead.value), clampMoney(invoice.total || invoice.amount)),
+      lastActivity: `Payment received via invoice ${invoice.id}.`,
+      updatedAt: isoNow()
+    };
+    const savedLead = await persistRecord(crmEntities.leads, nextLead);
+    setLeads((current) => current.map((lead) => (lead.id === savedLead.id ? savedLead : lead)));
+  };
+
   const updatePayment = async (id, field, value) => {
     const currentPayment = payments.find((payment) => payment.id === id);
     if (!currentPayment) return;
@@ -697,8 +774,31 @@ function App() {
     nextPayment.paid = Math.min(clampMoney(nextPayment.paid), total);
 
     try {
-      const saved = await persistRecord(crmEntities.payments, nextPayment);
+      if (field === 'status' && nextValue !== currentPayment.status) {
+        const versionedPayment = {
+          ...nextPayment,
+          id: nextId('INV', payments),
+          clientId: clientIdForInvoice(nextPayment),
+          paid: nextValue === 'Paid' ? total : nextPayment.paid,
+          paymentDate: nextValue === 'Paid' ? nextPayment.paymentDate || today : nextPayment.paymentDate,
+          pdfFileId: '',
+          pdfUrl: '',
+          pdfError: '',
+          createdAt: isoNow(),
+          updatedAt: isoNow()
+        };
+        const saved = await createRecord(crmEntities.payments, versionedPayment, { timeoutMs: 90000 });
+        setPayments((current) => [saved, ...current]);
+        await moveLinkedLeadToClient(saved);
+        return;
+      }
+
+      const saved = await persistRecord(crmEntities.payments, {
+        ...nextPayment,
+        clientId: clientIdForInvoice(nextPayment)
+      });
       setPayments((current) => current.map((payment) => (payment.id === id ? saved : payment)));
+      await moveLinkedLeadToClient(saved);
     } catch (error) {
       handleSyncError(error);
     }
@@ -795,7 +895,7 @@ function App() {
     const total = subtotal + taxAmount;
     const paid = Math.min(clampMoney(form.get('paid')), total);
     const paymentStatus = form.get('status') || (paid >= total ? 'Paid' : paid > 0 ? 'Part Paid' : 'Pending');
-    const newPayment = {
+    const newPaymentDraft = {
       id: nextId('INV', payments),
       leadId: form.get('leadId') || '-',
       client: form.get('client'),
@@ -823,10 +923,15 @@ function App() {
       createdAt: isoNow(),
       updatedAt: isoNow()
     };
+    const newPayment = {
+      ...newPaymentDraft,
+      clientId: clientIdForInvoice(newPaymentDraft)
+    };
 
     try {
-      const saved = await createRecord(crmEntities.payments, newPayment);
+      const saved = await createRecord(crmEntities.payments, newPayment, { timeoutMs: 90000 });
       setPayments((current) => [saved, ...current]);
+      await moveLinkedLeadToClient(saved);
       setShowPaymentForm(false);
       formElement.reset();
       if (saved.pdfError) {
@@ -971,7 +1076,7 @@ function App() {
             stageCounts={stageCounts}
             programMix={programMix}
             monthRevenue={revenueTrend}
-            leads={leads}
+            leads={pipelineLeads}
             tasks={tasks}
             setActive={setActive}
           />
@@ -1010,7 +1115,7 @@ function App() {
           />
         )}
 
-        {active === 'clients' && <ClientsView leads={leads.filter((lead) => ['LEAD_CONVERTED', 'PAYMENT_RECEIVED'].includes(lead.stage))} />}
+        {active === 'clients' && <ClientsView leads={leads} payments={currentInvoices} />}
 
         {active === 'reminders' && <RemindersView leads={leads} tasks={tasks} />}
 
@@ -1477,46 +1582,112 @@ function RemindersView({ leads, tasks }) {
   );
 }
 
-function ClientsView({ leads }) {
+function ClientsView({ leads, payments }) {
+  const leadLookup = Object.fromEntries(leads.map((lead) => [lead.id, lead]));
+  const panelStatuses = ['Paid', 'Part Paid', 'Pending', 'Draft', 'No Invoice'];
+  const invoiceCards = payments
+    .filter((payment) => payment.status !== 'Cancelled')
+    .map((payment) => {
+      const linkedLead = leadLookup[payment.leadId];
+      return {
+        id: payment.id,
+        clientId: clientIdForInvoice(payment),
+        name: payment.client || linkedLead?.name || 'Client',
+        city: linkedLead?.city || '',
+        phone: payment.clientPhone || linkedLead?.phone || '',
+        email: payment.clientEmail || linkedLead?.email || '',
+        program: payment.program || linkedLead?.program || '',
+        goal: linkedLead?.goal || '',
+        owner: linkedLead?.owner || 'Seema',
+        paid: payment.paid || 0,
+        total: payment.total || payment.amount || 0,
+        balance: Math.max((payment.total || payment.amount || 0) - (payment.paid || 0), 0),
+        nextFollowUp: linkedLead?.nextFollowUp || payment.due,
+        status: payment.status || 'Pending',
+        invoiceId: payment.id
+      };
+    });
+
+  const invoicedClientKeys = new Set(invoiceCards.map((card) => card.clientId));
+  const convertedWithoutInvoice = leads
+    .filter((lead) => isClientStage(lead.stage) && !invoicedClientKeys.has(lead.id))
+    .map((lead) => ({
+      id: lead.id,
+      clientId: lead.id,
+      name: lead.name,
+      city: lead.city,
+      phone: lead.phone,
+      email: lead.email,
+      program: lead.program,
+      goal: lead.goal,
+      owner: lead.owner,
+      paid: lead.paid || 0,
+      total: lead.value || 0,
+      balance: Math.max((lead.value || 0) - (lead.paid || 0), 0),
+      nextFollowUp: lead.nextFollowUp,
+      status: 'No Invoice',
+      invoiceId: 'No invoice'
+    }));
+
+  const clients = [...invoiceCards, ...convertedWithoutInvoice];
+
   return (
     <section className="screen-grid">
-      <section className="lead-grid">
-        {leads.length === 0 && (
-          <EmptyState title="No active clients loaded" message="Converted leads will appear here." />
-        )}
-        {leads.map((client) => (
-          <article className="lead-card client-card" key={client.id}>
-            <div className="lead-card-top">
-              <span>{client.id}</span>
-              <StatusPill value="Active Client" />
+      {clients.length === 0 && (
+        <EmptyState title="No clients loaded" message="Paid or converted leads will appear here after invoices are created." />
+      )}
+      <section className="client-board">
+        {panelStatuses.map((status) => (
+          <section className="client-panel" key={status}>
+            <div className="column-title">
+              <strong>{status}</strong>
+              <span>{clients.filter((client) => client.status === status).length}</span>
             </div>
-            <h2>{client.name}</h2>
-            <p>{client.program}</p>
-            <div className="lead-facts">
-              <span>{client.city}</span>
-              <span>{client.goal}</span>
-              <span>{client.owner}</span>
-            </div>
-            <div className="client-progress">
-              <div>
-                <span>Payment</span>
-                <strong>{formatMoney(client.paid)}</strong>
-              </div>
-              <div>
-                <span>Next Review</span>
-                <strong>{displayDate(client.nextFollowUp) || '-'}</strong>
-              </div>
-            </div>
-            <a
-              className="ghost-button full"
-              href={whatsappUrl(client, `Hi ${client.name}, this is Seema from StrongHer. Checking in on your ${client.program} progress and next review.`)}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <MessageCircle size={16} />
-              WhatsApp
-            </a>
-          </article>
+            {clients.filter((client) => client.status === status).map((client) => (
+              <article className="lead-card client-card" key={`${client.status}-${client.invoiceId}-${client.clientId}`}>
+                <div className="lead-card-top">
+                  <span>{client.invoiceId}</span>
+                  <StatusPill value={client.status === 'No Invoice' ? 'Active Client' : client.status} />
+                </div>
+                <h2>{client.name}</h2>
+                <p>{client.program || '-'}</p>
+                <div className="lead-facts">
+                  {client.city && <span>{client.city}</span>}
+                  {client.goal && <span>{client.goal}</span>}
+                  <span>{client.owner}</span>
+                </div>
+                <div className="client-progress">
+                  <div>
+                    <span>Paid</span>
+                    <strong>{formatMoney(client.paid)}</strong>
+                  </div>
+                  <div>
+                    <span>Balance Due</span>
+                    <strong>{formatMoney(client.balance)}</strong>
+                  </div>
+                </div>
+                <div className="client-progress">
+                  <div>
+                    <span>Total</span>
+                    <strong>{formatMoney(client.total)}</strong>
+                  </div>
+                  <div>
+                    <span>Next Review</span>
+                    <strong>{displayDate(client.nextFollowUp) || '-'}</strong>
+                  </div>
+                </div>
+                <a
+                  className="ghost-button full"
+                  href={whatsappUrl(client, `Hi ${client.name}, this is Seema from StrongHer. Checking in on your ${client.program} progress and next review.`)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <MessageCircle size={16} />
+                  WhatsApp
+                </a>
+              </article>
+            ))}
+          </section>
         ))}
       </section>
     </section>

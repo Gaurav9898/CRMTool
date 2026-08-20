@@ -107,7 +107,7 @@ const ENTITY_CONFIG = {
   financeInvoices: {
     sheetName: 'FinanceInvoices',
     idColumn: 'invoiceId',
-    headers: ['invoiceId', 'leadId', 'clientName', 'clientPhone', 'clientEmail', 'billingAddress', 'program', 'description', 'amount', 'discountLabel', 'discountAmount', 'subtotal', 'taxRate', 'taxAmount', 'total', 'paid', 'status', 'invoiceDate', 'paymentDate', 'dueDate', 'validFrom', 'validUntil', 'createdAt', 'updatedAt', 'paymentMode', 'notes', 'pdfFileId', 'pdfUrl', 'pdfError'],
+    headers: ['invoiceId', 'clientId', 'leadId', 'clientName', 'clientPhone', 'clientEmail', 'billingAddress', 'program', 'description', 'amount', 'discountLabel', 'discountAmount', 'subtotal', 'taxRate', 'taxAmount', 'total', 'paid', 'status', 'invoiceDate', 'paymentDate', 'dueDate', 'validFrom', 'validUntil', 'createdAt', 'updatedAt', 'paymentMode', 'notes', 'pdfFileId', 'pdfUrl', 'pdfError'],
     toSheet(record) {
       const amount = Number(record.amount || 0);
       const discountAmount = Math.min(Number(record.discountAmount || 0), amount);
@@ -118,6 +118,7 @@ const ENTITY_CONFIG = {
       const paid = Math.min(Number(record.paid || 0), total);
       return {
         invoiceId: record.id,
+        clientId: record.clientId || invoiceClientId_(record),
         leadId: record.leadId || '-',
         clientName: record.client || '',
         clientPhone: record.clientPhone || '',
@@ -157,6 +158,12 @@ const ENTITY_CONFIG = {
       const total = Number(row.total || subtotal + taxAmount);
       return {
         id: row.invoiceId,
+        clientId: row.clientId || invoiceClientId_({
+          leadId: row.leadId,
+          client: row.clientName,
+          clientPhone: row.clientPhone,
+          clientEmail: row.clientEmail
+        }),
         leadId: row.leadId || '-',
         client: row.clientName,
         clientPhone: row.clientPhone,
@@ -427,20 +434,42 @@ function getFirstMatchingSheet_(spreadsheet, sheetNames) {
 function append_(entity, record) {
   const config = getConfig_(entity);
   const sheet = SpreadsheetApp.openById(CONFIG.spreadsheetId).getSheetByName(config.sheetName);
+  const sheetHeaders = getSheetHeaders_(sheet);
   let nextRecord = { ...record, createdAt: record.createdAt || now_(), updatedAt: now_() };
   if (entity === 'financeInvoices') {
+    nextRecord = {
+      ...nextRecord,
+      id: uniqueInvoiceId_(sheet, sheetHeaders, nextRecord.id),
+      clientId: nextRecord.clientId || invoiceClientId_(nextRecord)
+    };
     nextRecord = attachInvoicePdf_(nextRecord);
   }
   if (entity === 'financeExpenses') {
     nextRecord = attachExpenseFile_(nextRecord);
   }
   const row = config.toSheet(nextRecord);
-  const sheetHeaders = getSheetHeaders_(sheet);
   sheet.appendRow(sheetHeaders.map((header) => row[header] ?? ''));
   if (entity === 'leads') {
     appendLeadHistory_('', nextRecord.stage || 'OPEN_LEAD', nextRecord);
   }
   return config.fromSheet(row);
+}
+
+function uniqueInvoiceId_(sheet, headers, requestedId) {
+  const existingIds = getColumnValues_(sheet, headers, 'invoiceId');
+  if (requestedId && existingIds.indexOf(String(requestedId)) === -1) return requestedId;
+
+  const maxNumber = existingIds.reduce((max, id) => {
+    const match = String(id || '').match(/INV-(\d+)$/);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 300);
+  return `INV-${maxNumber + 1}`;
+}
+
+function getColumnValues_(sheet, headers, columnName) {
+  const columnIndex = headers.indexOf(columnName) + 1;
+  if (columnIndex < 1 || sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, columnIndex, sheet.getLastRow() - 1, 1).getValues().flat().map((value) => String(value || ''));
 }
 
 function upsert_(entity, record) {
@@ -576,6 +605,7 @@ function invoiceHtml_(invoice) {
       .thanks-stamp div { display: table-cell; vertical-align: middle; font-size: 44px; line-height: 0.96; font-weight: 300; }
       .summary { display: grid; gap: 14px; align-content: start; }
       .summary div { display: flex; justify-content: space-between; gap: 18px; }
+      .summary .total-line span { font-weight: 700; }
       .summary strong { font-size: 14px; }
       .footer { display: grid; grid-template-columns: 1fr 210px; gap: 28px; margin-top: 24px; }
       .signature { align-self: end; line-height: 1.9; }
@@ -642,9 +672,9 @@ function invoiceHtml_(invoice) {
           <div class="summary">
             <div><span>Sub-total :</span><strong>${formatCurrency_(invoice.subtotal)}</strong></div>
             <div><span>taxes :</span><strong>${taxLabel}${Number(invoice.taxAmount || 0) ? ` / ${formatCurrency_(invoice.taxAmount)}` : ''}</strong></div>
-            <div><span>Total :</span><strong>${formatCurrency_(invoice.total)}</strong></div>
+            <div class="total-line"><span>Total :</span><strong>${formatCurrency_(invoice.total)}</strong></div>
             <div><span>Paid :</span><strong>${formatCurrency_(invoice.paid)}</strong></div>
-            <div><span>Balance :</span><strong>${formatCurrency_(balance)}</strong></div>
+            <div><span>Balance Due :</span><strong>${formatCurrency_(balance)}</strong></div>
           </div>
         </section>
 
@@ -685,6 +715,22 @@ function formatInvoiceDate_(value) {
 function formatCurrency_(value) {
   const amount = Number(value || 0);
   return `${amount.toLocaleString('en-IN')}/-`;
+}
+
+function invoiceClientId_(record) {
+  if (record.clientId) return record.clientId;
+  if (record.leadId && record.leadId !== '-') return record.leadId;
+  if (record.clientEmail) return `EMAIL-${stableKey_(record.clientEmail)}`;
+  if (record.clientPhone) return `PHONE-${stableKey_(record.clientPhone)}`;
+  return `CLIENT-${stableKey_(record.client || 'unknown')}`;
+}
+
+function stableKey_(value) {
+  const normalized = String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 36);
+  return normalized || 'unknown';
 }
 
 function lineBreaks_(value) {
